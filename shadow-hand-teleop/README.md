@@ -114,3 +114,101 @@ then launches the official VisionProTeleop Shadow Hand controller.
 3. Record one real-time grasping demonstration with a fixed Shadow Hand.
 4. Define one household manipulation task and evaluation metric.
 5. Add a simulated robotic arm only after fixed-hand control is reliable.
+
+## HDF5 recording and replay
+
+Install the project requirements (including `h5py`) into `.venv` first.
+To save a mock demonstration as HDF5:
+
+```bash
+.venv/bin/python scripts/collect_mock_demo.py --output data/mock_grasp_demo.h5
+```
+
+Replay it in the MuJoCo viewer on macOS:
+
+```bash
+.venv/bin/mjpython scripts/replay_demo.py data/mock_grasp_demo.h5
+```
+
+Use `--speed 0.5` for half speed or `--speed 2` for double speed. Close the
+viewer to stop. For validation without a window:
+
+```bash
+.venv/bin/python scripts/replay_demo.py data/mock_grasp_demo.h5 --headless
+```
+
+The player also accepts `.hdf5` and existing `.npz` demonstrations. Playback
+restores recorded states with their original sample timing; it does not rerun
+physics from actions. Files must match the default single left Shadow Hand model.
+
+HDF5 files use root datasets `timestamp` (N,), `qpos` (N, nq), `qvel` (N, nv),
+and `action` (N, nu). Times are seconds, finite, nonnegative, and strictly
+increasing. States and actions must be finite numeric arrays. Mock exports also
+include `object_pose` (N, 7; xyz then wxyz quaternion) and `contact_count` (N,).
+The object's state is already included in `qpos`; those extra datasets are for
+analysis. Exported HDF5 files include `schema_version=1` and JSON `metadata`
+attributes, plus the same JSON sidecar as NPZ exports. Other HDF5 layouts need
+conversion to these root dataset names and model dimensions before playback.
+
+Offline replay checks: `.venv/bin/python scripts/test_replay_data.py`.
+
+### HolosCapture exports
+
+The player automatically recognizes HolosCapture HDF5 exports. For example:
+
+```bash
+.venv/bin/mjpython scripts/replay_demo.py "$HOME/Downloads/2026-03-13T17-38-41-D834FA49-D935-4FAA-A4BA-C816E3C162AC.h5"
+```
+
+Use `--demo demo_1` to select another demonstration (default: `demo_0`).
+The adapter reads `data/<demo>/time` and
+`obs/hand_{left,right}_joints_world`, using each dataset's `joint_names`
+attribute or the root `joint` labels to reorder the skeleton. Parent-local
+joint positions are not used as world coordinates. NaN or degenerate hand
+frames hold that hand's last target; a hand starts neutral until valid tracking.
+
+Holos playback first retargets the capture through the existing approximate
+finger-flexion controller and simulates both fixed Shadow Hands, then plays
+those generated states at the recorded times. Preparation may take a few seconds.
+This is a reconstruction from human tracking, not recorded robot state. Wrist
+and arm motion, captured objects, cameras, and audio are not replayed. The
+capture's `actions` describe poses rather than Shadow actuator commands and
+are not sent directly to the simulated hands. `--headless` performs the same
+retargeting and simulation checks without opening a window.
+
+Holos captures now open in a side-by-side comparison by default: **recorded
+tracking on the left**, **moving Shadow reconstruction on the right**. The
+skeleton preserves recorded world-space joint positions at metric scale. Both
+panels share a fixed translation and Y-up to Z-up rotation; a constant horizontal
+offset separates them. Blue is the left tracked hand, orange is the right.
+
+Robot palm origins follow the recorded wrists. Wrist quaternions drive rotation,
+with a fixed anatomical alignment estimated from the first usable pose for each
+hand. Robot proportions and the approximate finger retargeter still differ from
+the human skeleton. Missing skeleton frames disappear; robot wrists and finger
+targets hold their previous pose. A robot stays hidden until its first valid wrist
+pose. This display moves the robot mounts kinematically; it does not simulate a
+robot arm or interactions with captured objects. This comparison supersedes the
+fixed-wrist description above. NPZ and flat robot-state HDF5 playback are unchanged.
+
+### Rising smoke interaction
+
+The robot comparison panel includes smoke emitters beneath the recorded hand
+workspace. Buoyant particles rise, curl, and deflect along MuJoCo hand surfaces;
+they diffuse sideways when blocked by a palm or finger. Puffs use their full visible radius for solid clearance. Batched distance checks against conservative oriented bounds resolve overlaps
+even when a moving hand sweeps into smoke; puffs that cannot fit between solids
+are removed. These bounds enclose collision shapes and visible meshes; smoke
+may deflect slightly before reaching the detailed surface. Press **S** to hide/show the plume. The original
+tracking panel stays clear for comparison.
+
+Smoke emits 24 puffs per second with a limit of 96 particles. Display updates
+are capped at 30 Hz and follow elapsed recording time, skipping overdue frames
+instead of accumulating playback delay. Hiding smoke with **S** also stops its
+collision processing.
+This is a bounded, lightweight particle approximation, not a volumetric fluid
+solver. Smoke does not exert forces on the prescribed replay motion. Emitters
+stay fixed beneath the capture workspace. Smoke timing follows recording time,
+including when playback speed changes. Smoke collision checks are also exercised
+by `--headless`; the final status reports surface interactions.
+
+Offline smoke checks: `.venv/bin/python scripts/test_smoke_plume.py`.

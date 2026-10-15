@@ -52,7 +52,7 @@ BASE_SCENE = """
 """
 
 
-def build_model() -> mujoco.MjModel:
+def build_model(moving=False) -> mujoco.MjModel:
     """Attach the official left and right hand models to one scene."""
     package_path = menagerie.get("shadow_hand").path()
     scene = mujoco.MjSpec.from_string(BASE_SCENE)
@@ -61,16 +61,20 @@ def build_model() -> mujoco.MjModel:
 
     # The hand models extend along world X, so separate them along world Y.
     # This places the two wrists on the same horizontal line in the default view.
-    left_mount = scene.worldbody.add_frame(
-        name="left_mount", pos=[0.0, 0.13, 0.0]
-    )
-    right_mount = scene.worldbody.add_frame(
-        name="right_mount", pos=[0.0, -0.13, 0.0]
-    )
+    if moving:
+        left_mount = scene.worldbody.add_body(name="left_mount", mocap=True).add_frame()
+        right_mount = scene.worldbody.add_body(name="right_mount", mocap=True).add_frame()
+    else:
+        left_mount = scene.worldbody.add_frame(name="left_mount", pos=[0.0, 0.13, 0.0])
+        right_mount = scene.worldbody.add_frame(name="right_mount", pos=[0.0, -0.13, 0.0])
 
     # Prefixes keep shared mesh, material, and default names from colliding.
     scene.attach(left, prefix="left_", frame=left_mount)
     scene.attach(right, prefix="right_", frame=right_mount)
+    if moving:
+        probe = scene.worldbody.add_body(name="smoke_probe", mocap=True, pos=[0, 0, -20])
+        probe.add_geom(name="smoke_probe_geom", type=mujoco.mjtGeom.mjGEOM_SPHERE,
+                       size=[.001, 0, 0], rgba=[0, 0, 0, 0], contype=0, conaffinity=0, group=5)
     return scene.compile()
 
 
