@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import argparse
-import json
 import os
 import time
 from contextlib import nullcontext
@@ -13,6 +12,8 @@ import mujoco
 import mujoco.viewer
 import mujoco_menagerie as menagerie
 import numpy as np
+
+from replay_data import save_demo
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -35,7 +36,7 @@ def parse_args() -> argparse.Namespace:
         "--output",
         type=Path,
         default=PROJECT_ROOT / "data" / "mock_grasp_demo.npz",
-        help="Destination .npz dataset path.",
+        help="Destination dataset path (.npz, .h5, or .hdf5).",
     )
     return parser.parse_args()
 
@@ -124,16 +125,6 @@ def main() -> None:
                 viewer.sync()
                 time.sleep(model.opt.timestep)
 
-    np.savez_compressed(
-        args.output,
-        timestamp=np.asarray(timestamps),
-        qpos=np.asarray(qpos),
-        qvel=np.asarray(qvel),
-        action=np.asarray(actions),
-        object_pose=np.asarray(object_pose),
-        contact_count=np.asarray(contact_count),
-    )
-
     metadata = {
         "source": "mock_input",
         "simulator": f"MuJoCo {mujoco.__version__}",
@@ -152,8 +143,15 @@ def main() -> None:
             "contact_count",
         ],
     }
+    save_demo(args.output, {
+        "timestamp": np.asarray(timestamps),
+        "qpos": np.asarray(qpos),
+        "qvel": np.asarray(qvel),
+        "action": np.asarray(actions),
+        "object_pose": np.asarray(object_pose),
+        "contact_count": np.asarray(contact_count),
+    }, metadata)
     metadata_path = args.output.with_suffix(".json")
-    metadata_path.write_text(json.dumps(metadata, indent=2) + "\n")
 
     print(f"Saved {len(timestamps)} samples to {args.output}")
     print(f"Saved metadata to {metadata_path}")

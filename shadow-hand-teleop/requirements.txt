@@ -3,3 +3,4 @@ mujoco-menagerie==2026.10.1
 avp_stream==2.51
 mink==1.3.0
 loop-rate-limiters==1.2.0
+h5py>=3.11,<4
