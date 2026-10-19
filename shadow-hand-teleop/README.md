@@ -1,5 +1,7 @@
 # Holos Vision Pro Teleoperation Proof of Concept
 
+> Development branch: start with [TEAM_SETUP.md](TEAM_SETUP.md) for installation, supported platforms, known limitations and contributing. Historical development notes follow.
+
 This project is the local simulation workspace for testing this pipeline:
 
 ```text
@@ -58,9 +60,142 @@ stale; a single stale hand holds its last actuator target. The SDK does not expo
 per-hand tracking validity in this interface, so a frozen but repeatedly sent
 skeleton cannot always be distinguished from a deliberately still hand.
 This is a connection/control prototype, not a calibrated grasping controller or
-a trained policy. Two robot arms have not been added yet.
+a trained policy. This original launcher keeps both wrists fixed; the optional
+arm-equipped version below has a separate launcher.
 
 Offline checks: `.venv/bin/python scripts/test_hand_retargeting.py`.
+
+## Two Panda arms with Shadow Hands
+
+Double-click `run_dual_arms.command` for an offline keyboard-controlled viewer.
+The default now uses simplified **spherical wrists**, described below. The
+previous Panda assembly remains available with `./run_dual_arms.command --wrist panda`.
+
+### Simplified spherical wrists (default)
+
+The large terminal Panda motor housings, joints 6/7, and the two Shadow wrist
+hinges are removed from this runtime model. Each side instead has a narrow
+capsule forearm and one actual MuJoCo `ball` joint (3 rotational degrees of
+freedom, stored as a 4-component unit quaternion), followed by the Shadow palm
+and 18 finger actuators. This is a custom simulated robot, not a hardware-valid
+Panda model or an anatomically accurate human wrist.
+
+Five remaining Panda joints position the center of each ball. Three torque
+actuators rotate the hand using quaternion/rotation-matrix error feedback;
+torque is recomputed every physics step, bounded to 4 Nm in norm. The body has
+idealized gravity compensation. The ball has a 130-degree joint limit, while
+user orientation targets remain limited to 120 degrees from home and smoothed
+at 0.8 rad/s. There are 52 actuators overall. Rotation can occur about the wrist
+center without requiring the old terminal Panda links to swing around.
+
+Both keyboard and Vision Pro launchers use this simplified model by default.
+Controls, explicit C calibration, stale-data hold, and no-recording behavior
+are the same as described below. The default camera shows palms down from
+behind the hands. These limits and the small workspace do not implement
+collision-aware planning; actual tracking can be constrained by contacts.
+
+Offline verification:
+
+```bash
+.venv/bin/python scripts/test_spherical_wrist.py
+.venv/bin/python scripts/view_dual_arms.py --headless --demo --seconds 5
+```
+
+### Previous Panda wrist assembly (optional)
+
+It attaches each Shadow Hand wrist/finger mechanism to a seven-joint Franka
+Panda arm. The redundant 21 cm Shadow forearm housing is replaced at runtime by
+a short adapter. Both robot models are fetched by `mujoco-menagerie` on first
+use into the ignored `.cache/` directory; both models use Apache-2.0 licenses.
+The arms use idealized gravity compensation and position servos, not hardware
+torque tuning. The green spheres show commanded wrist positions. The default
+operator camera looks forward/down from behind the hands above a worktable;
+palms face down and thumbs face inward. Left appears on screen left. This is a
+fixed Mac camera view, not a headset-tracked or headset-streamed camera.
+
+Robot commands now live in a separate **Holos — Hand controls** window. Click
+that control window before typing these keys, or use its labeled buttons.
+MuJoCo handles many of the same letters (I/J/U/P etc.) for visualization before
+calling Python, so robot hotkeys are deliberately not registered in its viewer.
+Use the simulation window for mouse/camera interaction. This also keeps C
+calibration from toggling contact visualization and F from toggling force plots.
+The control window uses this Mac's installed Tkinter in a separate normal
+Python process, so Tk and mjpython each own their native GUI event loop.
+Closing either window stops the demo and closes the other.
+
+- **1 / 2**: select left / right arm (right is initially selected).
+- **W / S**: move the selected wrist forward / backward (world X).
+- **A / D**: move left / right (world Y).
+- **R / V**: move up / down (world Z). Each press changes the target by 1.5 cm.
+- **F / O**: close / open both hands in offline mode.
+- **I / K**: bend the selected wrist up / down (5 degrees per press).
+- **J / L**: tilt the selected hand left / right (5 degrees per press).
+- **U / P**: turn the selected palm about the forearm (5 degrees per press).
+- **H**: reset both robots to their home poses.
+- **B**: switch between the operator view and the wider overview.
+- **SPACE**: pause / resume; close the window to stop.
+
+Alternatively run `./run_dual_arms.command --demo` for small scripted arm
+movements. This is an offline motion demo, not recorded human demonstrations.
+
+### Live wrist position, orientation, and fingers
+
+Run `run_live_dual_arms.command` and enter the current Tracking Streamer IP or
+room code. Keep the headset app active. Hold both hands comfortably, face
+forward relative to the headset's tracking-origin frame, and press **C** in the
+**Hand controls** window (or click Calibrate) to calibrate position/orientation. After calibration, wrist
+**translation and rotation** drive the robot. In the default spherical mode,
+position IK moves the wrist center and torque control rotates the ball joint.
+In optional `--wrist panda` mode, two Shadow hinges handle bending/deviation,
+with the remaining rotation handled by the seven Panda joints; that mode's
+pose reference is the palm base. The finger-bend mapping controls only fingers
+in both modes, so opening/closing fingers does not reset wrist commands.
+The coordinate convention is SDK +Y forward -> robot +X, SDK +X right -> robot
+-Y, SDK +Z up -> robot +Z. C resets position offsets, not the yaw convention.
+Rotation uses the relative 3D orientation since C and the same SDK-to-world
+axis conversion, rather than raw Euler angles. Recalibrating aligns the current
+human orientation with the current simulated palm orientation. If translation
+directions are rotated, face the tracking-origin forward direction before
+testing. This coordinate convention still needs validation with a live headset.
+
+The default translation scale is 0.6 (10 cm human motion -> 6 cm robot target
+motion). Orientation follows at 1:1 scale, capped at 120 degrees from the robot's
+home orientation. Orientation targets change at no more than 0.8 rad/s, and
+in optional Panda mode, the two wrist actuator commands change at no more than
+0.6 rad/s within their original limits. Panda IK handles residual rotation when
+a hinge limit is met. Spherical mode instead uses the torque limits above.
+These are prototype limits, not calibrated human wrist measurements.
+The position target is clipped to a small volume around each robot's home
+wrist: +/-16 cm in X, +/-14 cm in Y, -16/+18 cm in Z. Arm commands are limited
+to 0.6 rad/s and joint limits; these bounds are not collision-aware planning.
+Actual position/orientation can lag or stop short at unreachable targets. The
+green marker and its small red/green/blue axes show the commanded reference
+point and smoothed orientation; they do not certify successful tracking.
+
+Press **C** again to recenter. Stale tracking (>0.5 seconds), pause, or H reset
+invalidates arm calibration; fresh tracking resumes finger control but the arm
+requires another C. If both hands are stale, the entire simulation freezes;
+if one is stale, that side keeps its last joint command while the other runs.
+The SDK's previously noted repeated-frozen-skeleton limitation still applies.
+
+This version shows the simulation on the Mac and does not record episodes,
+train a policy, or stream the rendered scene into the headset. An offline test
+does not verify a live headset connection or real-world grasping performance.
+
+Offline checks (no headset or graphical viewer required):
+
+```bash
+.venv/bin/python scripts/test_arm_control.py
+.venv/bin/python scripts/test_control_panel.py
+.venv/bin/python scripts/view_dual_arms.py --headless --demo --seconds 5
+```
+
+Optional preview PNG (requires a Mac graphical session/OpenGL):
+
+```bash
+.venv/bin/mjpython scripts/view_dual_arms.py --headless --demo --seconds 5 \
+  --screenshot outputs/dual_arms_preview.png
+```
 
 ## Mock teleoperation/data-collection demo
 
@@ -114,6 +249,108 @@ then launches the official VisionProTeleop Shadow Hand controller.
 3. Record one real-time grasping demonstration with a fixed Shadow Hand.
 4. Define one household manipulation task and evaluation metric.
 5. Add a simulated robotic arm only after fixed-hand control is reliable.
+# Human-shaped arm variant
+
+Both human-arm launchers now include a tabletop workspace: fixed table and
+teal tray, plus a yellow hollow cup with a handle (0.21 kg, free to move).
+Use H in the separate controls panel to reset the arms AND cup. In live
+mode recalibrate with C afterwards. The cup has gravity; only the arms
+use ideal gravity compensation. Grasping and placement are not yet
+validated with live headset input; F is a generic fist, not an automatic
+grasp command. No liquid, breakage or real-material fidelity is modeled.
+Scene dimensions and initial positions live in `scripts/workspace_scene.py`.
+
+`run_human_arms.command` opens an offline shoulder–elbow–wrist prototype.
+`run_live_human_arms.command` connects the same model to Tracking Streamer:
+press Start on Vision Pro, enter its current IP or room code on the Mac,
+then use C in the separate controls window to calibrate a comfortable pose.
+
+Each fixed shoulder is a three-axis ball joint, the elbow is a one-axis
+hinge, and the wrist is a three-axis ball joint connected to Shadow Hand.
+This variant uses ideal gravity compensation and is not a hardware-faithful
+robot or anatomical model. The human variant now accepts full 180-degree
+orientation targets, with no ball-joint cone limit on its virtual wrist;
+this does not represent anatomical wrist bending or a physical robot's range.
+Older Panda/spherical variants retain their original limits.
+
+### Optional forearm input
+
+The installed `avp_stream` SDK exposes wrist-local `left_arm`/`right_arm`
+arrays: 25 points on older streams, or 27 with `forearmWrist` (25) and
+`forearmArm` (26). The bridge validates those two extra transforms and their
+separation (8–50 cm), and rotates their difference into the SDK world frame.
+It does NOT treat these local arrays as already-world-space HandData.
+
+Press C with both hands visible and held comfortably. This calibrates
+relative wrist motion AND a direction-only forearm alignment. The controller
+uses two-bone geometric IK: wrist reach determines an elbow circle, and
+forearm direction guides a bounded swivel on that circle. Both elbows
+start slightly outward. Away from the center, a 15 mm outward shoulder-plane
+margin overrides inward forearm requests. For hands meeting at the center,
+the margin relaxes: elbows may come inside shoulder width, but remain at
+least 8 cm on their own side of the body centerline. Infeasible extreme
+reaches are shortened toward home. This posture envelope is not general
+collision avoidance. Fixed robot
+shoulders and limb lengths mean this is not a one-to-one copy of your elbow
+position; conflicting or unreachable directions are approximated.
+
+The controls panel reports per side:
+
+- `forearm ON`: usable current vector and calibrated direction guide.
+- `forearm press C`: usable data, but no forearm calibration yet.
+- `forearm unavailable`: missing/invalid/stale data; wrist-only fallback.
+
+Missing optional forearm data never discards valid finger or wrist data.
+The SDK's arrays do not expose per-joint confidence flags, so the validity
+checks cannot prove measurement accuracy or distinguish every repeated
+placeholder from a genuinely stationary limb. Wrist tracking loss, pause,
+and home reset still require C to recalibrate. Forward/vertical translation
+remains at 0.6 scale. Human-arm lateral workspaces now overlap (30 cm inward,
+14 cm outward from home). When both hands are fresh during C, lateral gain
+is fitted to your initial left/right wrist spacing, so bringing real wrists
+together does not retain the old artificial 50 cm anchor gap. Face forward,
+hold wrists comfortably 20–70 cm apart, and calibrate both together. Implausible
+spacing/gain falls back to the ordinary scale; this is not body-heading
+calibration. The wrist housing radius is 18 mm and the forearm sleeve stops
+3 cm short of the pivot so a bulky casing does not prevent palm contact.
+All collision geometry remains enabled. Thumb opposition/grasping is
+unchanged and has NOT been validated by these changes.
+
+Offline tests exercise packet decoding, 25-point fallback, calibration,
+elbow swivel with the wrist held in place, and physical 180-degree palm
+rolls. Run `.venv/bin/python scripts/test_forearm_tracking.py`.
+Human-arm command limits are now 1.8 rad/s for shoulder/elbow and 2.5 rad/s
+for palm orientation and forearm-guide smoothing. The viewer budgets physics
+steps from elapsed wall time rather than a fixed 10 ms per rendered frame.
+Individual physics steps stay at 2 ms; long stalls are capped at 50 ms of
+catch-up to avoid a large jump. Paused/stale time is not replayed on resume.
+`scripts/test_posture_timing.py` checks mirrored home, inward-guide rejection,
+30/60/100/144 Hz timing, and physical response at a 30 Hz render budget.
+Live forearm availability/quality and the resulting visual correspondence
+still need headset validation; no live connection is claimed by these tests.
+`scripts/test_bimanual_contact.py` verifies lateral span fitting, invalid-span
+fallback, physical palm-to-palm contact (not just wrist contact), and release.
+
+### Gradual offline opening and reach feedback
+
+In the arm viewer, F now eases both hands toward the fist command over 0.9 s,
+and O eases toward open over 1.3 s, using a cubic ramp at each 2 ms physics
+step. Repeated keys do not restart an identical transition. Pause freezes
+the ramp and H clears it together with the scene reset. Live finger mapping
+is unchanged. This reduces abrupt command changes; it does not guarantee
+that every cup/handle contact configuration releases without an impulse.
+The immediate `set_fist` helper remains available to offline tests only.
+
+Human-arm status shows `REACH LIMIT` if the requested wrist position is
+clipped by more than 5 mm by workspace, arm-length or elbow-envelope limits.
+This is not a collision warning. Calibration C recenters the input; it
+cannot move a fixed shoulder or extend the 28 cm + 26 cm arm. Cup and tray
+locations are unchanged. H resets both arms and the cup if the cup has been
+thrown outside reach. No movable base or torso is implemented here.
+`scripts/test_hand_transition.py` checks ramp timing, interruptions, repeated
+keys, reset and reach warnings; a live/user grasp-and-release test is still
+needed to confirm the cup no longer gets pushed during opening.
+
 
 ## HDF5 recording and replay
 

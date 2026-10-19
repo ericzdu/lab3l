@@ -35,12 +35,14 @@ def finger_targets(joints: np.ndarray) -> dict[str, float]:
     return targets
 
 
-def actuator_indices(model, side: str) -> dict[str, int]:
+def actuator_indices(model, side: str, include_wrist=True) -> dict[str, int]:
     prefix = f"{side}_{side[0]}h_A_"
     result = {model.actuator(i).name[len(prefix):]: i for i in range(model.nu)
-              if model.actuator(i).name.startswith(prefix)}
-    if len(result) != 20:
-        raise ValueError(f"Expected 20 {side} Shadow Hand actuators, got {len(result)}")
+              if model.actuator(i).name.startswith(prefix)
+              and (include_wrist or model.actuator(i).name[len(prefix):] not in ("WRJ1", "WRJ2"))}
+    expected = 20 if include_wrist else 18
+    if len(result) != expected:
+        raise ValueError(f"Expected {expected} {side} Shadow Hand actuators, got {len(result)}")
     return result
 
 

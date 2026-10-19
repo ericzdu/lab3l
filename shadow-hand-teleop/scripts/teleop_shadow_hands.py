@@ -20,7 +20,7 @@ from view_dual_shadow_hands import build_model
 
 
 class TrackingBridge:
-    def __init__(self, factory, address):
+    def __init__(self, factory, address, with_wrist=False):
         self.lock = threading.Lock()
         self.stop = threading.Event()
         self.streamer = None
@@ -28,6 +28,7 @@ class TrackingBridge:
         self.error = None
         self.factory = factory
         self.address = address
+        self.with_wrist = with_wrist
         self.thread = threading.Thread(target=self.run, daemon=True)
 
     def run(self):
@@ -46,7 +47,21 @@ class TrackingBridge:
                         packet = {}
                         for side in ("left", "right"):
                             try:
-                                packet[side] = (time.monotonic(), finger_targets(sample[f"{side}_fingers"]))
+                                entry = (time.monotonic(), finger_targets(sample[f"{side}_fingers"]))
+                                if self.with_wrist:
+                                    from arm_control import wrist_position
+                                    wrist = np.asarray(sample[f"{side}_wrist"], dtype=float).copy()
+                                    wrist_position(wrist)
+                                    entry = (*entry, wrist)
+                                    from forearm_tracking import forearm_vector
+                                    # Optional: absence of 27-point data must
+                                    # not disable valid wrist/finger streaming.
+                                    try:
+                                        arm = sample[f"{side}_arm"]
+                                    except KeyError:
+                                        arm = None
+                                    entry = (*entry, forearm_vector(arm, wrist))
+                                packet[side] = entry
                             except (ValueError, KeyError, TypeError):
                                 pass
                         with self.lock:
