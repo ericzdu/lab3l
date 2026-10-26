@@ -96,8 +96,11 @@ The same letters can trigger native MuJoCo shortcuts in the wrong window.
 - `I` / `K`, `J` / `L`, `U` / `P`: wrist orientation adjustments.
 - `F`: both hands close gradually over about 0.9 seconds.
 - `O`: both hands open gradually over about 1.3 seconds.
-- `H`: reset arms **and cup**; this discards the current scene pose.
+- `H`: reset arms **and cup**; this discards the current scene pose (and
+  saves an episode in progress).
 - `Space`: pause/resume; `B`: operator/overview camera.
+- `E`: start / stop+save an episode; `X`: discard it. See README
+  "Recording episodes"; recordings go to the ignored `data/episodes/`.
 
 On Linux (not validated here), the equivalent viewer command is:
 
@@ -154,10 +157,13 @@ connection codes in commits.
 - **Idealized arms.** Shoulders are fixed; elbow posture is inferred/guided,
   wrist freedom is virtual, and gravity compensation is idealized. This is
   not a hardware-faithful robot or an anatomical digital twin.
-- **No live arm-demo recorder or trained policy.** The live arm launcher controls
-  the scene but does not save demonstrations. Existing mock export / HDF5
-  replay tools are retained; they must not be described as recorded live-arm
-  demonstrations. See README for their supported schemas/models.
+- **Episode recorder, but no trained policy.** The human-arm workspace
+  launchers record episodes (E): simulated robot state, raw Vision Pro input,
+  cup/contact signals and camera video. They are simulation driven by human
+  tracking, not real-robot data. Keyboard and live episodes share a schema
+  but are not equivalent demonstrations. Success/phase labels are heuristics
+  that have not been tuned against hand-labelled episodes yet. The older mock
+  export / HDF5 replay tools are unchanged.
 - **Platform/UI validation.** Offline checks do not validate another person's
   headset, network, graphics driver or Tk installation. Start with keyboard
   mode before debugging streaming.
@@ -177,6 +183,8 @@ reproducibility. Post which area you are taking so others can avoid duplication.
 | Viewer loop / gradual opening | `scripts/view_dual_arms.py` |
 | Separate controls window | `scripts/control_panel.py` |
 | Existing export / playback | `scripts/collect_mock_demo.py`, `scripts/replay_data.py`, `scripts/replay_demo.py` |
+| Episode recording / video | `scripts/episode_recorder.py`, `scripts/episode_video.py` |
+| Success / phase labels | `scripts/episode_labels.py`, `scripts/label_episode.py`, `scripts/summarize_episodes.py` |
 
 Most model code uses metres, radians and kilograms. Keep body names and actuator
 names unique when adding models. Preserve teammates' replay modules and the
@@ -196,5 +204,7 @@ git push -u origin YourName
 Then open a PR, state what changed, list checks performed, and document remaining
 issues. Keep `.venv`, `.cache`, downloaded models, recordings, personal file paths
 and credentials out of Git. License notices and attribution are required when
-reusing third-party code; neither BunnyVisionPro nor a full live recorder is
-present merely because it is listed as a possible future task.
+reusing third-party code; BunnyVisionPro is not present merely because it
+is listed as a possible future task. Recorded
+episodes under `data/` are git-ignored; share them outside Git, and only
+with the operator's agreement.

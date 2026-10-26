@@ -178,8 +178,9 @@ requires another C. If both hands are stale, the entire simulation freezes;
 if one is stale, that side keeps its last joint command while the other runs.
 The SDK's previously noted repeated-frozen-skeleton limitation still applies.
 
-This version shows the simulation on the Mac and does not record episodes,
-train a policy, or stream the rendered scene into the headset. An offline test
+This version shows the simulation on the Mac and does not record episodes
+(recording is only available in the human-arm workspace; see "Recording
+episodes"), train a policy, or stream the rendered scene into the headset. An offline test
 does not verify a live headset connection or real-world grasping performance.
 
 Offline checks (no headset or graphical viewer required):
@@ -351,6 +352,97 @@ thrown outside reach. No movable base or torso is implemented here.
 keys, reset and reach warnings; a live/user grasp-and-release test is still
 needed to confirm the cup no longer gets pushed during opening.
 
+## Recording episodes
+
+The human-arm workspace scene (`--wrist human --workspace`, i.e. both
+`run_human_arms.command` and `run_live_human_arms.command`) can record
+episodes. An episode is **simulated robot state driven by human tracking**
+(or keyboard/scripted targets), not real-robot data. Live episodes also keep
+the raw Vision Pro input, so they can be re-run through a future retargeter.
+Keyboard and live episodes share one schema but are not equivalent
+demonstrations.
+
+| Key / button (controls window) | Action |
+|---|---|
+| **E** · Record | Start an episode; press again to stop and save it |
+| **X** · Discard | Stop and delete the current episode |
+| **H** | Save the current episode (`end_reason="reset"`), then reset arms and cup |
+| Space | Pause/resume; no samples are recorded while paused |
+| Esc / close a window | Save the current episode (`end_reason="viewer_closed"`) |
+
+The status line shows `● REC 00:12.4 · ep 0007` while recording, then
+`Saved ep 0007 · SUCCESS` or `Saved ep 0007 · FAIL (not_released)`; the
+terminal prints the saved folder. Episodes auto-stop at
+`--max-episode-seconds`. In live mode press C before E; starting earlier is
+allowed but warns `REC started before calibration (press C)`.
+
+Flags (the launchers forward extra arguments):
+
+| Flag | Default | Meaning |
+|---|---|---|
+| `--record-dir` | `data/episodes` | Where episodes are written (git-ignored) |
+| `--task` | `cup_to_tray` | Task id; the labeler evaluates `cup_to_tray` only |
+| `--operator` | empty | Optional tag such as initials (≤ 32 characters) |
+| `--video` / `--no-video` | on | Render operator + overview camera MP4s |
+| `--video-fps` | 30 | Frame rate in simulation time |
+| `--video-size` | `640x480` | Per-camera size (even numbers) |
+| `--max-episode-seconds` | 120 | Auto-stop and save |
+| `--no-auto-label` | off | Skip labeling after saving |
+
+For example: `./run_live_human_arms.command --operator NT --video-fps 15`.
+
+Each episode is a folder `data/episodes/<YYYYMMDD-HHMMSS>_<task>_<NNNN>/` with
+`episode.h5`, `episode.json` (the same metadata as the HDF5 `metadata`
+attribute) and, with video, `cam_operator.mp4` and `cam_overview.mp4`.
+`episode.h5` (`schema="lab3l.episode"`, `schema_version=2`) is sample-major,
+with one sample per loop iteration in which physics advanced (~100 Hz):
+
+| Group | Contents |
+|---|---|
+| `time/` | `sim` (from 0, strictly increasing) and `wall` seconds |
+| `robot/` | `qpos`, `qvel`, `ctrl`, actual and target wrist pose, `reach_error` |
+| `input/` | raw wrist transform, 25-joint finger skeleton, 27-point arm skeleton, forearm vector, retargeted finger targets, `fresh`, packet age/sequence. NaN/False/-1 in keyboard mode |
+| `scene/` | cup pose (xyz + wxyz) and linear/angular velocity |
+| `contacts/` | hand–cup per finger group (thumb, ff, mf, rf, lf, palm, other), arm–cup, hand–cup normal force, cup–table, cup–tray, hand–hand, `ncon` |
+| `video/<camera>/` | `frame_time` and `sample_index` of every written frame |
+| `labels/` | per-sample `phase`, plus segments/events/outcome attributes |
+
+Root attribute `events` is a JSON list of record start/stop, pause/resume,
+reset, calibrate (with the wrist-mapper calibration), tracking lost/regained,
+reach-limit on/off and errors. Metadata records the model's joint/actuator
+names, camera intrinsics, software versions and git commit. It never stores
+the Tracking Streamer address or absolute paths. Do not commit recordings.
+
+**Video caveats.** Frames are rendered offscreen on the control thread, with
+one camera per loop iteration, and encoded on a background thread. If the
+encoder falls behind, frames are dropped and counted in
+`metadata.video.dropped_frames`; `frame_time` keeps exact alignment. Measured on
+an M-series Mac with the viewer open (scripted demo, 640x480, 30 fps): about
+11 ms per render whatever the resolution, and 12 ms median / 14 ms max loop
+work, against 2 ms without video. If control feels sluggish, use
+`--video-fps 15` or `--no-video`. If the renderer cannot be created, recording
+continues state-only and `metadata.video.status` says why.
+
+**Labels.** After each save, `scripts/episode_labels.py` runs automatically. It
+splits the episode into phases (idle, reach, grasp, lift, transport, place,
+release, retreat, recover) and decides cup-to-tray success with a failure
+reason (`never_touched`, `never_lifted`, `dropped_outside_tray`, `tipped_over`,
+`not_in_tray`, `not_released`, `not_settled`, `too_short`). It uses only the
+recorded contacts and cup motion. Thresholds are hand-chosen heuristics in
+`LabelConfig`, not yet tuned against human-labelled episodes. Confidence
+scores are heuristic too. The three confidence factors are stored per
+segment so the labeler can be recalibrated later.
+
+```bash
+.venv/bin/python scripts/label_episode.py data/episodes            # (re)label all; --dry-run to preview
+.venv/bin/python scripts/summarize_episodes.py --csv episodes.csv  # outcome/phase table
+.venv/bin/mjpython scripts/replay_demo.py data/episodes/<id>/episode.h5
+```
+
+Replay rebuilds the workspace scene, checks that joint/actuator names match,
+restores arms, hands and cup, and prints phase transitions and the outcome.
+Tests: `scripts/test_episode_recorder.py`, `scripts/test_episode_labels.py`.
+
 
 ## HDF5 recording and replay
 
@@ -376,7 +468,8 @@ viewer to stop. For validation without a window:
 
 The player also accepts `.hdf5` and existing `.npz` demonstrations. Playback
 restores recorded states with their original sample timing; it does not rerun
-physics from actions. Files must match the default single left Shadow Hand model.
+physics from actions. Files must match the default single left Shadow Hand model,
+except recorded `lab3l.episode` files (see "Recording episodes").
 
 HDF5 files use root datasets `timestamp` (N,), `qpos` (N, nq), `qvel` (N, nv),
 and `action` (N, nu). Times are seconds, finite, nonnegative, and strictly
