@@ -43,6 +43,26 @@ class WorkspaceTests(unittest.TestCase):
         self.assertTrue(all(self.m.geom_type[i]==mujoco.mjtGeom.mjGEOM_BOX for i in walls))
         self.assertEqual(self.m.joint("cup_free").type[0],mujoco.mjtJoint.mjJNT_FREE)
 
+    def test_named_constants_preserve_geometry(self):
+        # Literal values from before the constants refactor (labeler depends on them).
+        expected={
+            "tray_base":([.10,.075,.006],[0,0,.006]),
+            "tray_rim_0_-1":([.005,.075,.016],[-.10,0,.022]),
+            "tray_rim_0_1":([.005,.075,.016],[.10,0,.022]),
+            "tray_rim_1_-1":([.10,.005,.016],[0,-.075,.022]),
+            "tray_rim_1_1":([.10,.005,.016],[0,.075,.022]),
+            "cup_bottom":([.034,.006,0],[0,0,-.051]),
+        }
+        for name,(size,pos) in expected.items():
+            geom=self.m.geom(name)
+            np.testing.assert_allclose(geom.size,size,atol=1e-12,err_msg=name)
+            np.testing.assert_allclose(geom.pos,pos,atol=1e-12,err_msg=name)
+        np.testing.assert_allclose(self.m.body("tray").pos,[.43,-.12,.505],atol=1e-12)
+        np.testing.assert_allclose(CUP_START,[.32,-.28,.562],atol=1e-12)
+        from workspace_scene import CUP_HALF_HEIGHT,CUP_RADIUS,TRAY_HALF_EXTENTS,TRAY_RIM_THICKNESS
+        self.assertEqual((TRAY_HALF_EXTENTS,TRAY_RIM_THICKNESS,CUP_RADIUS,CUP_HALF_HEIGHT),
+                         ((.10,.075),.005,.034,.057))
+
 
 if __name__=="__main__":
     unittest.main()
