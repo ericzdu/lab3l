@@ -412,7 +412,7 @@ class EpisodeRecorder:
 
     # -- finishing ----------------------------------------------------------
     def metadata(self, end_reason, samples, duration, video):
-        from workspace_scene import CUP_START, TABLE_TOP, TRAY_CENTER
+        from workspace_scene import CUP_START, SCENE_VERSION, TABLE_TOP, TRAY_CENTER
         model = self.model
         return json_safe({
             "schema": SCHEMA, "schema_version": SCHEMA_VERSION,
@@ -420,7 +420,8 @@ class EpisodeRecorder:
             "operator": self.operator, "created_utc": self.created,
             "duration_sim_s": round(float(duration), 6), "samples": samples,
             "end_reason": end_reason,
-            "scene": {"wrist_mode": self.wrist_mode, "workspace": self.workspace,
+            "scene": {"scene_version": SCENE_VERSION,
+                      "wrist_mode": self.wrist_mode, "workspace": self.workspace,
                       "scale": self.scale, "cup_start": CUP_START,
                       "tray_center": TRAY_CENTER, "table_top": TABLE_TOP},
             "model": {"nq": model.nq, "nv": model.nv, "nu": model.nu,

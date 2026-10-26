@@ -4,24 +4,47 @@ import unittest
 import numpy as np
 
 from episode_labels import PHASES, LabelConfig, debounce, label_episode
-from workspace_scene import CUP_HALF_HEIGHT, CUP_START, TABLE_TOP, TRAY_CENTER
+import workspace_scene
+from workspace_scene import CUP_HALF_HEIGHT
 
 DT = .01
-REST = TABLE_TOP + CUP_HALF_HEIGHT
-TRAY_REST = REST + .012
 UPRIGHT = np.array([1., 0, 0, 0])
 ON_SIDE = np.array([np.cos(np.pi / 4), np.sin(np.pi / 4), 0, 0])  # 90 deg about x
-OFF_TRAY = np.array([.32, -.02, REST])
-ABOVE_TRAY = np.array([*TRAY_CENTER, .64])
-IN_TRAY = np.array([*TRAY_CENTER, TRAY_REST])
-WRIST_HOME = np.array([.30, -.05, .72])
+
+
+class Layout:
+    """Synthetic waypoints for one prop layout (scene version)."""
+    def __init__(self, version, table_top, cup_start, tray_center):
+        self.version, self.table_top = version, float(table_top)
+        self.cup_start = np.asarray(cup_start, dtype=float)
+        self.tray_center = np.asarray(tray_center, dtype=float)
+        self.rest = self.table_top + CUP_HALF_HEIGHT
+        self.tray_rest = self.rest + .012
+        self.off_tray = np.array([*(self.tray_center + [-.11, .10]), self.rest])
+        self.above_tray = np.array([*self.tray_center, self.tray_rest + .066])
+        self.in_tray = np.array([*self.tray_center, self.tray_rest])
+        self.wrist_home = np.array([.30, -.05, self.rest + .158])
+
+    def metadata_scene(self):
+        return {"scene_version": self.version, "table_top": self.table_top,
+                "cup_start": self.cup_start.tolist(), "tray_center": self.tray_center.tolist()}
+
+
+CURRENT = Layout(workspace_scene.SCENE_VERSION, workspace_scene.TABLE_TOP,
+                 workspace_scene.CUP_START, workspace_scene.TRAY_CENTER)
+# Literal version-1 layout, independent of the current module constants.
+V1 = Layout(1, .505, [.32, -.28, .562], [.43, -.12])
+REST, TRAY_REST, CUP_START = CURRENT.rest, CURRENT.tray_rest, CURRENT.cup_start
+OFF_TRAY, ABOVE_TRAY, IN_TRAY = CURRENT.off_tray, CURRENT.above_tray, CURRENT.in_tray
+WRIST_HOME = CURRENT.wrist_home
 
 
 class Script:
     """Piecewise-linear synthetic episode for the right hand (left idle)."""
-    def __init__(self):
+    def __init__(self, layout=CURRENT):
+        self.layout = layout
         self.rows = []
-        self.cup, self.wrist, self.quat = CUP_START.copy(), WRIST_HOME.copy(), UPRIGHT
+        self.cup, self.wrist, self.quat = layout.cup_start.copy(), layout.wrist_home.copy(), UPRIGHT
 
     def segment(self, seconds, cup=None, wrist=None, quat=None, touch=False, table=False,
                 tray=False, fresh=True, groups=("thumb", "ff")):
@@ -39,7 +62,8 @@ class Script:
         return self
 
     def grasp_to_lift(self, flicker=False):
-        near = CUP_START + [0, .02, .06]
+        start = self.layout.cup_start
+        near = start + [0, .02, .06]
         self.segment(.5, table=True)                       # idle
         self.segment(.8, wrist=near, table=True)          # reach
         if flicker:
@@ -48,13 +72,14 @@ class Script:
             self.segment(.40, touch=True, table=True)
         else:
             self.segment(.5, touch=True, table=True)      # grasp
-        self.segment(.5, cup=CUP_START + [0, 0, .08], wrist=near + [0, 0, .08], touch=True)
+        self.segment(.5, cup=start + [0, 0, .08], wrist=near + [0, 0, .08], touch=True)
         return self
 
     def transport_and_place(self, release=True, final_quat=None):
         offset = self.wrist - self.cup
-        self.segment(1.5, cup=ABOVE_TRAY, wrist=ABOVE_TRAY + offset, touch=True)
-        self.segment(.5, cup=IN_TRAY, wrist=IN_TRAY + offset, touch=True, tray=True)
+        above, inside = self.layout.above_tray, self.layout.in_tray
+        self.segment(1.5, cup=above, wrist=above + offset, touch=True)
+        self.segment(.5, cup=inside, wrist=inside + offset, touch=True, tray=True)
         self.segment(.4, touch=True, tray=True)
         if release:
             self.segment(.2, tray=True, quat=final_quat)
@@ -92,9 +117,9 @@ class Script:
         }
 
 
-def label(script, source="keyboard", task="cup_to_tray"):
+def label(script, source="keyboard", task="cup_to_tray", scene=None):
     metadata = {"task": task, "source": source,
-                "scene": {"table_top": TABLE_TOP, "tray_center": TRAY_CENTER.tolist()}}
+                "scene": script.layout.metadata_scene() if scene is None else scene}
     return label_episode(script.arrays(), metadata)
 
 
@@ -244,6 +269,45 @@ class LabelTests(unittest.TestCase):
         out = debounce(raw, t, .1)
         self.assertFalse(out[:12].any())
         self.assertTrue(out[12:].all())
+
+
+class OldEpisodeTests(unittest.TestCase):
+    """Version-1 episodes (props at their original positions) keep their labels."""
+    # Labels of this synthetic version-1 episode, computed before the props moved.
+    EXPECTED = [("idle", 0, 1.0), ("reach", 49, 1.0), ("grasp", 130, 1.0), ("lift", 186, .738182),
+                ("transport", 229, .935858), ("place", 380, 1.0), ("release", 470, 1.0),
+                ("retreat", 501, 1.0)]
+
+    def check(self, labels):
+        self.assertTrue(labels["outcome"]["success"])
+        self.assertAlmostEqual(labels["outcome"]["confidence"], 1.0, places=6)
+        self.assertEqual([(g["phase"], g["start_sample"], round(g["confidence"], 6))
+                          for g in labels["segments"]], self.EXPECTED)
+
+    def test_old_metadata_labels_identically(self):
+        script = Script(V1).grasp_to_lift().transport_and_place()
+        # As recorded before scene_version existed: positions present, no version.
+        old = {k: v for k, v in V1.metadata_scene().items() if k != "scene_version"}
+        self.check(label(script, scene=old))
+        # No scene geometry at all: a missing version means the version-1 layout.
+        self.check(label(script, scene={}))
+        self.check(label(script, scene=V1.metadata_scene()))
+
+    def test_scene_geometry_fallbacks(self):
+        from episode_labels import scene_geometry
+        old = scene_geometry({})
+        self.assertEqual(old["scene_version"], 1)
+        self.assertEqual(old["table_top"], .505)
+        np.testing.assert_allclose(old["tray_center"], [.43, -.12])
+        np.testing.assert_allclose(old["cup_start"], [.32, -.28, .562])
+        current = scene_geometry({"scene": {"scene_version": workspace_scene.SCENE_VERSION}})
+        self.assertEqual(current["table_top"], workspace_scene.TABLE_TOP)
+        np.testing.assert_allclose(current["tray_center"], workspace_scene.TRAY_CENTER)
+        recorded = scene_geometry({"scene": {"scene_version": 7, "table_top": .7,
+                                             "tray_center": [.1, .2], "cup_start": None}})
+        self.assertEqual(recorded["table_top"], .7)
+        np.testing.assert_allclose(recorded["tray_center"], [.1, .2])
+        np.testing.assert_allclose(recorded["cup_start"], workspace_scene.CUP_START)
 
 
 if __name__ == "__main__":

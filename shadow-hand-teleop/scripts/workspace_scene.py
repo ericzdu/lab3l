@@ -2,6 +2,10 @@
 import mujoco
 import numpy as np
 
+# Bump SCENE_VERSION whenever the props move; episodes store it in
+# metadata.scene, and a missing value means version 1 (SCENE_V1 below).
+SCENE_VERSION = 1
+SCENE_V1 = {"table_top": .505, "cup_start": (.32, -.28, .562), "tray_center": (.43, -.12)}
 TABLE_TOP = .505
 # Tray outer half-extents (x, y) and rim wall half-thickness.
 TRAY_HALF_EXTENTS = (.10, .075)

@@ -31,7 +31,33 @@ def episode_model(metadata):
         if recorded.get(kind) != current:
             raise ValueError(f"Episode {kind} do not match the current human-arm model; "
                              "it was recorded with a different scene version")
+    warning = prop_layout_warning(metadata)
+    if warning:
+        print(warning, flush=True)
     return model
+
+
+def prop_layout_warning(metadata):
+    """Warn when the episode's table/cup/tray differ from the current scene.
+
+    Replay rebuilds the model from current code: the robot replay stays valid
+    (same nq/nv/nu), but the table and tray are drawn at their new positions.
+    """
+    import workspace_scene
+    from episode_labels import scene_geometry
+    recorded = scene_geometry(metadata)
+    if not recorded["table_top"] or not metadata.get("scene", {}).get("workspace", True):
+        return None
+    current = {"table_top": workspace_scene.TABLE_TOP, "cup_start": workspace_scene.CUP_START,
+               "tray_center": workspace_scene.TRAY_CENTER}
+    changed = [key for key, value in current.items()
+               if not np.allclose(recorded[key], value, atol=1e-6)]
+    if not changed:
+        return None
+    return ("WARNING: this episode was recorded with scene version "
+            f"{recorded['scene_version']} ({', '.join(changed)} differ from the current scene). "
+            "The robot and cup replay as recorded, but the table and tray are shown at their "
+            "NEW positions, so the cup may appear to float or sink.")
 
 
 class PhaseAnnouncer:

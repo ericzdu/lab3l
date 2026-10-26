@@ -15,8 +15,8 @@ from pathlib import Path
 
 import numpy as np
 
-from workspace_scene import (CUP_HALF_HEIGHT, TABLE_TOP, TRAY_CENTER, TRAY_HALF_EXTENTS,
-                             TRAY_RIM_THICKNESS)
+import workspace_scene
+from workspace_scene import CUP_HALF_HEIGHT, TRAY_HALF_EXTENTS, TRAY_RIM_THICKNESS
 
 
 LABELER_VERSION = "1"
@@ -53,6 +53,28 @@ class LabelConfig:
 NEEDED = ("time/sim", "robot/wrist_pos", "input/fresh", "scene/cup_pose", "scene/cup_linvel",
           "scene/cup_angvel", "contacts/hand_cup", "contacts/arm_cup", "contacts/cup_table",
           "contacts/cup_tray", "contacts/hand_hand")
+
+
+def scene_geometry(metadata):
+    """Prop positions an episode was recorded with, from metadata.scene.
+
+    Each of table_top / cup_start / tray_center falls back only when missing:
+    to the version-1 layout if the episode has no scene_version (recorded
+    before it existed), else to the current workspace_scene constants. Cup
+    and tray sizes have not changed between scene versions.
+    """
+    scene = (metadata or {}).get("scene") or {}
+    version = int(scene.get("scene_version", 1))
+    if version == 1:
+        defaults = workspace_scene.SCENE_V1
+    else:
+        defaults = {"table_top": workspace_scene.TABLE_TOP,
+                    "cup_start": workspace_scene.CUP_START,
+                    "tray_center": workspace_scene.TRAY_CENTER}
+    value = lambda key: scene[key] if scene.get(key) is not None else defaults[key]
+    return {"scene_version": version, "table_top": float(value("table_top")),
+            "cup_start": np.asarray(value("cup_start"), dtype=float),
+            "tray_center": np.asarray(value("tray_center"), dtype=float)[:2]}
 
 
 def episode_path(path):
@@ -170,8 +192,8 @@ class Signals:
         self.supported = d(self.supported_raw)
         pose = np.asarray(arrays["scene/cup_pose"], dtype=float)
         self.cup = pose[:, :3]
-        scene = metadata.get("scene") or {}
-        rest = scene.get("table_top", TABLE_TOP) + CUP_HALF_HEIGHT
+        scene = scene_geometry(metadata)
+        rest = scene["table_top"] + CUP_HALF_HEIGHT
         self.height = self.cup[:, 2] - rest
         self.lifted_raw = ~self.supported_raw & (self.height > cfg.lift_height)
         self.lifted = d(self.lifted_raw)
@@ -184,8 +206,7 @@ class Signals:
         self.wrist = np.asarray(arrays["robot/wrist_pos"], dtype=float)
         self.fresh = np.asarray(arrays["input/fresh"], dtype=bool)
         self.live = metadata.get("source") == "live"
-        center = np.asarray(scene.get("tray_center", TRAY_CENTER), dtype=float)[:2]
-        self.tray_offset = np.abs(self.cup[:, :2] - center)
+        self.tray_offset = np.abs(self.cup[:, :2] - scene["tray_center"])
         self.tray_bounds = np.asarray(TRAY_HALF_EXTENTS) - TRAY_RIM_THICKNESS
 
     def window(self, start, seconds):

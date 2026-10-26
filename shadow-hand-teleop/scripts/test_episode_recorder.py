@@ -13,6 +13,7 @@ import numpy as np
 from arm_control import SIDES, WristMapper
 from episode_recorder import CONTACT_GROUPS, PROJECT_ROOT, SCHEMA, EpisodeRecorder, dataset_layout
 from hand_retargeting import FINGER_TARGET_NAMES, synthetic_skeleton
+from workspace_scene import CUP_START, SCENE_VERSION, TABLE_TOP, TRAY_CENTER
 from view_dual_arms import (RECORDING_REQUIRES, advance_physics, demo_targets, reset_scene,
                             setup, toggle_recording)
 
@@ -84,7 +85,7 @@ class RecorderTests(unittest.TestCase):
             self.assertTrue((file["input/packet_seq"][...] == -1).all())
             # Cup rests on the table at the start position.
             self.assertTrue(file["contacts/cup_table"][...][-20:].all())
-            np.testing.assert_allclose(file["scene/cup_pose"][0, :3], [.32, -.28, .562], atol=.003)
+            np.testing.assert_allclose(file["scene/cup_pose"][0, :3], CUP_START, atol=.003)
             np.testing.assert_allclose(file["robot/qpos"][-1], self.data.qpos)
             metadata = json.loads(file.attrs["metadata"])
             events = json.loads(file.attrs["events"])
@@ -95,6 +96,8 @@ class RecorderTests(unittest.TestCase):
                     "finger_target_names", "video", "labels"):
             self.assertIn(key, metadata)
         self.assertEqual(metadata["samples"], n)
+        self.assertEqual(metadata["scene"]["scene_version"], SCENE_VERSION)
+        self.assertEqual(metadata["scene"]["table_top"], TABLE_TOP)
         self.assertEqual(metadata["source"], "scripted_demo")
         self.assertEqual(metadata["end_reason"], "user_stop")
         self.assertEqual(metadata["model"]["nq"], self.model.nq)
@@ -337,6 +340,21 @@ class RecorderTests(unittest.TestCase):
         self.assertTrue((directory / "episode.h5").exists())
         with h5py.File(directory / "episode.h5") as file:
             self.assertNotIn("labels", file)
+
+    def test_replay_warns_when_props_moved(self):
+        from replay_demo import prop_layout_warning
+        current = {"scene_version": SCENE_VERSION, "workspace": True, "table_top": TABLE_TOP,
+                   "cup_start": CUP_START.tolist(), "tray_center": TRAY_CENTER.tolist()}
+        self.assertIsNone(prop_layout_warning({"scene": current}))
+        moved = dict(current, scene_version=SCENE_VERSION + 1, table_top=TABLE_TOP + .1)
+        warning = prop_layout_warning({"scene": moved})
+        self.assertIn("table_top", warning)
+        self.assertIn("NEW positions", warning)
+        # An old episode without scene_version is compared as the version-1 layout.
+        from workspace_scene import SCENE_V1
+        old = prop_layout_warning({"scene": {"workspace": True}})
+        same = np.isclose(SCENE_V1["table_top"], TABLE_TOP) and np.allclose(SCENE_V1["tray_center"], TRAY_CENTER)
+        self.assertEqual(old is None, bool(same and np.allclose(SCENE_V1["cup_start"], CUP_START)))
 
     def test_scene_or_argument_errors_are_loud(self):
         with self.assertRaisesRegex(ValueError, "requires"):
