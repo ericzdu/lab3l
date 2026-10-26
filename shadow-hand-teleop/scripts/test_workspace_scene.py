@@ -63,6 +63,22 @@ class WorkspaceTests(unittest.TestCase):
         self.assertEqual((TRAY_HALF_EXTENTS,TRAY_RIM_THICKNESS,CUP_RADIUS,CUP_HALF_HEIGHT),
                          ((.10,.075),.005,.034,.057))
 
+    def test_worktop_follows_table_top(self):
+        worktop=self.m.geom("worktop")
+        self.assertAlmostEqual(worktop.pos[2]+worktop.size[2],TABLE_TOP,places=12)
+        from human_arms import build_human_model
+        bare=build_human_model(workspace=False).geom("worktop")
+        self.assertAlmostEqual(bare.pos[2]+bare.size[2],TABLE_TOP,places=12)
+
+    def test_other_variants_keep_their_table(self):
+        # Panda and spherical-wrist scenes are not driven by TABLE_TOP.
+        from arm_control import build_arm_model
+        from spherical_wrist import build_spherical_model
+        for model in (build_arm_model(),build_spherical_model()):
+            worktop=model.geom("worktop")
+            np.testing.assert_allclose(worktop.pos,[.62,0,.48],atol=1e-12)
+            np.testing.assert_allclose(worktop.size,[.46,.58,.025],atol=1e-12)
+
 
 if __name__=="__main__":
     unittest.main()
