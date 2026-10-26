@@ -86,8 +86,9 @@ On macOS, double-click `run_human_arms.command` in Finder, or run:
 ./run_human_arms.command
 ```
 
-That opens dual simplified human-shaped arms, Shadow Hands, a table, a yellow
-cup and a teal tray. Use the separate **Holos — Hand controls** window for
+That opens dual simplified human-shaped arms, Shadow Hands, a table (top at
+0.60 m), a yellow cup in front of the right hand and a teal tray between the
+hands (scene version 2; see README "Human-shaped arm variant"). Use the separate **Holos — Hand controls** window for
 robot keys/buttons; click the MuJoCo window only for camera/display controls.
 The same letters can trigger native MuJoCo shortcuts in the wrong window.
 
@@ -135,7 +136,10 @@ The Linux equivalent (not validated here) is:
 .venv/bin/python scripts/view_dual_arms.py --wrist human --workspace --address CURRENT_IP_OR_ROOM_CODE
 ```
 
-After tracking loss, pause/resume or H reset, press C again. C recenters input;
+After tracking loss, pause/resume or H reset, press C again. On unreliable
+Wi-Fi, `./run_live_human_arms.command --auto-recenter` re-anchors an arm by
+itself after a tracking gap under 3 s (default off). See README "Tips for live
+recording". C recenters input;
 it does not move the physical simulation base. `ICE closed` plus `WAIT / HOLD`
 means no fresh hand data is reaching this controller; inspect the terminal
 before trying to calibrate repeatedly. Do not share personal recordings or
@@ -145,7 +149,10 @@ connection codes in commits.
 
 - **Fixed shoulder bases and fixed 28 cm / 26 cm arm links.** Some targets are
   unreachable or clipped by the workspace/posture envelope. `REACH LIMIT`
-  reports requested-target clipping, not collision. A movable shoulder/torso
+  reports requested-target clipping, not collision. The table, cup and tray
+  were moved so a right-hand cup-to-tray fits inside those limits;
+  `scripts/check_reach.py` measures this, and `scripts/scripted_cup_to_tray.py`
+  is a scripted pick and place that labels as success. A movable shoulder/torso
   base has been discussed but **is not implemented in this branch**.
 - **Approximate live finger retargeting.** Finger spread and full thumb opposition
   are missing. Offline keyboard grasping has been observed, but live capture
@@ -179,7 +186,8 @@ reproducibility. Post which area you are taking so others can avoid duplication.
 | Human arm geometry / IK / reach limits | `scripts/human_arms.py` |
 | Input calibration / coordinate mapping | `scripts/arm_control.py`, `scripts/forearm_tracking.py` |
 | Live packet bridge / approximate fingers | `scripts/teleop_shadow_hands.py`, `scripts/hand_retargeting.py` |
-| Cup / tray / tabletop props | `scripts/workspace_scene.py` |
+| Cup / tray / tabletop props | `scripts/workspace_scene.py` (bump `SCENE_VERSION` when they move) |
+| Reach probe / scripted cup-to-tray | `scripts/check_reach.py`, `scripts/scripted_cup_to_tray.py` |
 | Viewer loop / gradual opening | `scripts/view_dual_arms.py` |
 | Separate controls window | `scripts/control_panel.py` |
 | Existing export / playback | `scripts/collect_mock_demo.py`, `scripts/replay_data.py`, `scripts/replay_demo.py` |

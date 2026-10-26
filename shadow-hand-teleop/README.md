@@ -261,6 +261,33 @@ validated with live headset input; F is a generic fist, not an automatic
 grasp command. No liquid, breakage or real-material fidelity is modeled.
 Scene dimensions and initial positions live in `scripts/workspace_scene.py`.
 
+**Scene layout (version 2).** The worktop top is at z = 0.60 m (was 0.505),
+the cup starts at (0.30, −0.27) and the tray is centred at (0.30, −0.09)
+(was (0.32, −0.28) and (0.43, −0.12)); x is forward, y is the robot's left.
+At the old height the right palm could only rest on the cup's rim, because
+the wrist clip box and 0.53 m reach cap stop it about 6 cm too high. The arms,
+clip box and reach cap are unchanged; only the props moved. Episodes store
+`metadata.scene.scene_version` (missing = version 1) and the prop positions,
+so older episodes still label correctly; replay warns that their props are
+drawn at the new positions.
+
+`scripts/check_reach.py` is a headless probe of that workspace. It sweeps
+each wrist over its clip box (2 cm grid, palm-down / palm-inward / palm-inward
+pitched 30°), settles physics, and reports the best palm-inward wrap of the
+cup and whether a cup held that way can be put in the tray with 3 cm to
+spare from every limit (about 3 minutes on 11 cores; `--side right`,
+`--json out.json`). Re-run it after moving props. With the Shadow hand turned
+palm-inward the open thumb rests on the cup's rim, so the report also counts
+those "rim" wraps. Version 2 result: right-hand wrap with 5.6 cm limit
+clearance, placement at the tray centre with 5.7 cm.
+
+`scripts/scripted_cup_to_tray.py` is a deterministic right-hand pick and
+place built only from controller targets and the gradual open/close. It
+records a `scripted_demo` episode that labels SUCCESS (reach > grasp > lift >
+transport > place > release > retreat). It shows the scene is solvable within
+the live limits; it is not a policy. Add `--viewer` (with `mjpython`) to
+watch it.
+
 `run_human_arms.command` opens an offline shoulder–elbow–wrist prototype.
 `run_live_human_arms.command` connects the same model to Tracking Streamer:
 press Start on Vision Pro, enter its current IP or room code on the Mac,
@@ -345,9 +372,9 @@ The immediate `set_fist` helper remains available to offline tests only.
 Human-arm status shows `REACH LIMIT` if the requested wrist position is
 clipped by more than 5 mm by workspace, arm-length or elbow-envelope limits.
 This is not a collision warning. Calibration C recenters the input; it
-cannot move a fixed shoulder or extend the 28 cm + 26 cm arm. Cup and tray
-locations are unchanged. H resets both arms and the cup if the cup has been
-thrown outside reach. No movable base or torso is implemented here.
+cannot move a fixed shoulder or extend the 28 cm + 26 cm arm. The table, cup
+and tray were moved into reach (scene version 2, above). H resets both arms
+and the cup if the cup has been thrown outside reach. No movable base or torso is implemented here.
 `scripts/test_hand_transition.py` checks ramp timing, interruptions, repeated
 keys, reset and reach warnings; a live/user grasp-and-release test is still
 needed to confirm the cup no longer gets pushed during opening.
@@ -391,6 +418,23 @@ Flags (the launchers forward extra arguments):
 
 For example: `./run_live_human_arms.command --operator NT --video-fps 15`.
 
+**Tips for live recording**
+
+- Press **H** then **C** before each episode, so the arms and cup start at home
+  and the mapping is fresh.
+- Keep your hands within about 25 cm of where they were when you pressed C.
+  At the default `--scale 0.6` that already covers the arm's clip box.
+- Watch the status for `REACH LIMIT`. It means the requested wrist position
+  is clipped, so move back toward the calibration pose.
+- If a side shows `arm press C`, its tracking dropped for more than 0.5 s and
+  that arm is frozen until you press **C**.
+- On flaky Wi-Fi add `--auto-recenter`, for example
+  `./run_live_human_arms.command --auto-recenter`. An arm that was following
+  and whose tracking returns within `--recenter-window` seconds (default 3)
+  re-anchors at its current pose with its previous gains, shows
+  `arm FOLLOW (auto)` for a second, and logs an `auto_recenter` event.
+  Longer gaps still need C. The default (freeze until C) is unchanged.
+
 Each episode is a folder `data/episodes/<YYYYMMDD-HHMMSS>_<task>_<NNNN>/` with
 `episode.h5`, `episode.json` (the same metadata as the HDF5 `metadata`
 attribute) and, with video, `cam_operator.mp4` and `cam_overview.mp4`.
@@ -408,8 +452,8 @@ with one sample per loop iteration in which physics advanced (~100 Hz):
 | `labels/` | per-sample `phase`, plus segments/events/outcome attributes |
 
 Root attribute `events` is a JSON list of record start/stop, pause/resume,
-reset, calibrate (with the wrist-mapper calibration), tracking lost/regained,
-reach-limit on/off and errors. Metadata records the model's joint/actuator
+reset, calibrate (with the wrist-mapper calibration), auto_recenter (side,
+gap), tracking lost/regained, reach-limit on/off and errors. Metadata records the model's joint/actuator
 names, camera intrinsics, software versions and git commit. It never stores
 the Tracking Streamer address or absolute paths. Do not commit recordings.
 
@@ -441,7 +485,9 @@ segment so the labeler can be recalibrated later.
 
 Replay rebuilds the workspace scene, checks that joint/actuator names match,
 restores arms, hands and cup, and prints phase transitions and the outcome.
-Tests: `scripts/test_episode_recorder.py`, `scripts/test_episode_labels.py`.
+Tests: `scripts/test_episode_recorder.py`, `scripts/test_episode_labels.py`,
+`scripts/test_scripted_cup_to_tray.py`, `scripts/test_auto_recenter.py`,
+`scripts/test_check_reach.py`.
 
 
 ## HDF5 recording and replay
