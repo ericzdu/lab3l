@@ -12,17 +12,21 @@ import sys
 import threading
 
 
-KEYS = set(map(ord, "12WASDRVIKJLUPFOHCB ")) | {256}
+KEYS = set(map(ord, "12WASDRVIKJLUPFOHCBEX ")) | {256}
+# Keys still accepted while live tracking drives the arms.
+LIVE_KEYS = set(map(ord, "12HCBEX "))
 
 
 class ControlPanel:
-    def __init__(self, events, live=False):
+    def __init__(self, events, live=False, recording=False):
         self.events = events
         self.closed = False
         python = Path(sys.prefix) / "bin" / "python"
         command = [str(python), str(Path(__file__).resolve()), "--gui"]
         if live:
             command.append("--live")
+        if recording:
+            command.append("--recording")
         self.process = subprocess.Popen(command, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
                                         text=True, bufsize=1)
         self.reader = threading.Thread(target=self._read, daemon=True)
@@ -67,7 +71,7 @@ class ControlPanel:
         self.process.stdout.close()
 
 
-def gui(live):
+def gui(live, recording=False):
     import tkinter as tk
     from tkinter import ttk
     from queue import Empty, SimpleQueue
@@ -111,15 +115,17 @@ def gui(live):
     controls = [
         ("Home · H", ord("H")), ("Calibrate · C", ord("C")),
         ("Pause / resume · Space", 32), ("Switch view · B", ord("B")),
+        ("Record · E", ord("E")), ("Discard · X", ord("X")),
     ]
     for i, (text, key) in enumerate(controls):
+        disabled = (key == ord("C") and not live) or (key in (ord("E"), ord("X")) and not recording)
         ttk.Button(frame, text=text, width=20, takefocus=False,
-            state="disabled" if key == ord("C") and not live else "normal",
+            state="disabled" if disabled else "normal",
             command=lambda key=key: emit(key)).grid(row=10 + i // 2, column=i % 2, padx=3, pady=3, sticky="ew")
-    ttk.Label(frame, textvariable=status, wraplength=340).grid(row=12, column=0, columnspan=2, sticky="w", pady=(10, 4))
+    ttk.Label(frame, textvariable=status, wraplength=340).grid(row=13, column=0, columnspan=2, sticky="w", pady=(10, 4))
     if live:
         ttk.Label(frame, text="Press C here to calibrate.\nForearm ON = usable data + calibrated guide;\nunavailable = wrist-only fallback.",
-            wraplength=340).grid(row=13, column=0, columnspan=2, sticky="w")
+            wraplength=340).grid(row=14, column=0, columnspan=2, sticky="w")
 
     def keypress(event):
         # Keep ordinary copy/menu shortcuts from becoming robot commands.
@@ -132,7 +138,7 @@ def gui(live):
             text = event.char.upper()
             if len(text) == 1 and ord(text) in KEYS:
                 key = ord(text)
-                if not live or key in set(map(ord, "12HCB ")):
+                if not live or key in LIVE_KEYS:
                     emit(key)
                 return "break"
 
@@ -175,6 +181,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--gui", action="store_true")
     parser.add_argument("--live", action="store_true")
+    parser.add_argument("--recording", action="store_true")
     args = parser.parse_args()
     if args.gui:
-        gui(args.live)
+        gui(args.live, args.recording)

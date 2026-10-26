@@ -62,3 +62,7 @@ def synthetic_skeleton(angle=0.0):
             theta = j * angle
             point = point + 0.025 * np.array([0, np.cos(theta), -np.sin(theta)])
     return joints
+
+
+# Fixed key order of finger_targets(); recordings store targets in this order.
+FINGER_TARGET_NAMES = tuple(finger_targets(synthetic_skeleton()))

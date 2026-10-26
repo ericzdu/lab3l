@@ -1,7 +1,8 @@
 """Interactive dual Panda + Shadow Hand demo; optional live Vision Pro input.
 
 Run with mjpython on macOS. In live mode C calibrates wrist position and
-orientation. No recording, policy, or hardware control.
+orientation. In the --wrist human --workspace scene, E records an episode of
+simulated robot state (see episode_recorder.py). No policy or hardware control.
 """
 
 from __future__ import annotations
@@ -157,6 +158,46 @@ def save_screenshot(model, data, destination):
     print(f"Screenshot saved: {output}", flush=True)
 
 
+RECORDING_REQUIRES = "Recording requires --wrist human --workspace"
+
+
+def toggle_recording(recorder, data, calibrated=True):
+    """E: start an episode, or stop and save it. Returns a notice, if any."""
+    if recorder is None:
+        print(RECORDING_REQUIRES, flush=True)
+        return RECORDING_REQUIRES
+    if recorder.recording:
+        recorder.stop(data, "user_stop")
+        return None
+    recorder.start(data)
+    print(f"Recording episode {recorder.counter:04d}: E stops and saves, X discards.", flush=True)
+    if not calibrated:
+        recorder.notice = "REC started before calibration (press C)"
+    return None
+
+
+def reset_scene(data, controller, mapper, finger_motion=None, recorder=None):
+    """H: save any current episode (end_reason "reset"), then reset arms and cup."""
+    if recorder is not None and recorder.recording:
+        recorder.event(data, "reset")
+        recorder.stop(data, "reset")
+    if finger_motion:
+        finger_motion.clear()
+    controller.reset(data)
+    for side in SIDES:
+        mapper.invalidate(side)
+
+
+def video_size(text):
+    try:
+        width, height = (int(value) for value in text.lower().split("x"))
+    except ValueError:
+        raise argparse.ArgumentTypeError("expected WIDTHxHEIGHT, for example 640x480")
+    if not (16 <= width <= 4096 and 16 <= height <= 4096):
+        raise argparse.ArgumentTypeError("video size must be 16-4096 pixels per side")
+    return width, height
+
+
 def demo_targets(controller, t):
     # Small smooth relative movements to exercise actual arm joint control.
     for side, sign in (("left", 1), ("right", -1)):
@@ -178,6 +219,20 @@ def parse_args():
     parser.add_argument("--demo", action="store_true", help="Offline scripted arm motion, not human data")
     parser.add_argument("--headless", action="store_true", help="Run offline physics without an interactive viewer")
     parser.add_argument("--screenshot", help="Save a PNG at exit")
+    recording = parser.add_argument_group("episode recording (--wrist human --workspace only)")
+    recording.add_argument("--record-dir", default=None,
+                           help="Episode folder (default: data/episodes in the project)")
+    recording.add_argument("--task", default="cup_to_tray", help="Task id stored in metadata")
+    recording.add_argument("--operator", default="", help="Optional operator tag, e.g. initials")
+    recording.add_argument("--video", action=argparse.BooleanOptionalAction, default=True,
+                           help="Render operator/overview camera videos (default: on)")
+    recording.add_argument("--video-fps", type=float, default=30, help="Video frame rate in sim time")
+    recording.add_argument("--video-size", type=video_size, default=(640, 480),
+                           help="Per-camera WIDTHxHEIGHT (default 640x480)")
+    recording.add_argument("--max-episode-seconds", type=float, default=120,
+                           help="Auto-stop and save after this much sim time")
+    recording.add_argument("--no-auto-label", action="store_true",
+                           help="Do not label episodes after saving")
     args = parser.parse_args()
     if args.workspace and args.wrist != "human":
         parser.error("--workspace currently requires --wrist human")
@@ -185,6 +240,15 @@ def parse_args():
         parser.error("Use live tracking or the offline demo, not both")
     if args.seconds < 0 or not np.isfinite(args.seconds):
         parser.error("--seconds must be finite and nonnegative")
+    if len(args.operator) > 32:
+        parser.error("--operator must be at most 32 characters")
+    from episode_recorder import TASK_PATTERN
+    if not TASK_PATTERN.match(args.task):
+        parser.error("--task must be 1-40 letters, digits, '_' or '-'")
+    for name in ("video_fps", "max_episode_seconds"):
+        value = getattr(args, name)
+        if not np.isfinite(value) or value <= 0:
+            parser.error(f"--{name.replace('_', '-')} must be positive and finite")
     return args
 
 
@@ -221,19 +285,34 @@ def main():
 
         bridge = TrackingBridge(VisionProStreamer, args.address, with_wrist=True)
 
+    recorder = None
+    if args.workspace:
+        from episode_recorder import DEFAULT_RECORD_DIR, EpisodeRecorder
+        recorder = EpisodeRecorder(model, controller, hands,
+            record_dir=args.record_dir or DEFAULT_RECORD_DIR, task=args.task,
+            operator=args.operator,
+            source="live" if bridge else "scripted_demo" if args.demo else "keyboard",
+            wrist_mode=args.wrist, workspace=args.workspace, scale=args.scale,
+            video=args.video, video_fps=args.video_fps, video_size=args.video_size,
+            max_seconds=args.max_episode_seconds)
+    record_notice = None
+    end_reason = "viewer_closed"
+
     events = SimpleQueue()
     selected, paused, overview = "right", False, False
-    last_status = None
+    last_status = last_panel_status = None
     print(f"Two arms + Shadow Hands; wrist assembly: {args.wrist}.", flush=True)
     print("Use buttons/keyboard in the separate 'Holos — Hand controls' window.", flush=True)
     print("The MuJoCo window keeps its native camera/display shortcuts; robot keys are NOT bound there.", flush=True)
     print("1: select LEFT | 2: select RIGHT | W/S: forward/back | A/D: left/right | R/V: up/down", flush=True)
     print("H: reset home | SPACE: pause/resume", flush=True)
     print("B: switch operator / overview camera. Default view looks forward over palms-down hands.", flush=True)
+    if recorder:
+        print("E: start/stop+save an episode | X: discard it. Episodes are simulated robot state.", flush=True)
     if bridge:
         print("LIVE: face forward, hold hands comfortably, then press C in Hand controls.", flush=True)
         print("C: calibrate/recenter wrist position AND orientation. Fingers use the previous mapping.", flush=True)
-        print("After a tracking interruption or pause, press C again. No data recording is enabled.", flush=True)
+        print("After a tracking interruption or pause, press C again.", flush=True)
         if args.wrist == "human":
             print("Optional 27-point forearm tracking: panel shows ON / press C / unavailable.", flush=True)
             print("Forearm guides elbow posture; shoulder is fixed, not full-body tracking.", flush=True)
@@ -241,7 +320,8 @@ def main():
     else:
         print("F: both fists (0.9 s) | O: both open gradually (1.3 s)", flush=True)
         print("I/K: bend wrist up/down | J/L: tilt left/right | U/P: turn palm about forearm", flush=True)
-        print("Offline keyboard mode. Vision Pro is not required. No data is recorded.", flush=True)
+        print("Offline keyboard mode. Vision Pro is not required." +
+              (" Press E to record an episode." if recorder else " No data is recorded."), flush=True)
     started = time.monotonic()
     panel = None
     quit_requested = False
@@ -252,7 +332,7 @@ def main():
             with viewer.lock():
                 configure_camera(viewer.cam)
             from control_panel import ControlPanel
-            panel = ControlPanel(events, live=bridge is not None)
+            panel = ControlPanel(events, live=bridge is not None, recording=recorder is not None)
             physics_clock = PhysicsClock(model.opt.timestep)
             last_tick = time.monotonic()
             while viewer.is_running():
@@ -290,14 +370,18 @@ def main():
                             paused = not paused
                             for side in SIDES:
                                 mapper.invalidate(side)
+                            if recorder:
+                                recorder.event(data, "pause" if paused else "resume")
                             print("PAUSED" if paused else "RESUMED (live arms need C)", flush=True)
                         elif key == glfw.KEY_H:
-                            if finger_motion:
-                                finger_motion.clear()
-                            controller.reset(data)
-                            for side in SIDES:
-                                mapper.invalidate(side)
+                            reset_scene(data, controller, mapper, finger_motion, recorder)
                             print("Reset to home; live arms need C", flush=True)
+                        elif key == glfw.KEY_E:
+                            record_notice = toggle_recording(recorder, data,
+                                calibrated=not bridge or all(side in mapper.origins for side in SIDES))
+                        elif key == glfw.KEY_X:
+                            if recorder:
+                                recorder.discard()
                         elif key == glfw.KEY_C and bridge and not paused:
                             calibrated=[]
                             for side in SIDES:
@@ -317,11 +401,17 @@ def main():
                                             else "unavailable; wrist-only fallback"), flush=True)
                                 else:
                                     print(f"Cannot calibrate {side}: waiting for fresh tracking", flush=True)
+                            hand_span=None
                             if args.wrist=="human" and len(calibrated)==2:
-                                if mapper.calibrate_hand_span():
+                                hand_span=mapper.calibrate_hand_span()
+                                if hand_span:
                                     print("Both-hand span calibrated: lateral closing follows your initial hand spacing.",flush=True)
                                 else:
                                     print("Hand-span calibration skipped: hold hands 12–85 cm apart, face forward, and press C.",flush=True)
+                            if recorder:
+                                from episode_recorder import mapper_state
+                                recorder.event(data, "calibrate", sides=calibrated, hand_span=hand_span,
+                                               mapper=mapper_state(mapper, calibrated))
                         elif key in (glfw.KEY_F, glfw.KEY_O) and not bridge:
                             for side in SIDES:
                                 finger_motion.request(data, hands[side], key == glfw.KEY_F)
@@ -369,10 +459,17 @@ def main():
                     if steps:
                         controller.command(data, active=active, dt=control_dt)
                         advance_physics(model, data, controller, steps=steps, finger_motion=finger_motion)
+                        if recorder and recorder.recording:
+                            recorder.sample(data, samples=samples, fresh=fresh, paused=paused, mapper=mapper)
                     else:
                         controller.update_markers(data)
                     if not np.isfinite(data.qpos).all():
                         raise RuntimeError("Non-finite simulation state; stopping")
+                    if recorder and recorder.recording:
+                        recorder.watch(data, fresh)
+                        recorder.maybe_render(data)
+                        if recorder.expired(data):
+                            recorder.stop(data, "max_duration")
                 if bridge:
                     status = " | ".join(
                         f"{side}: {'LIVE' if fresh[side] else 'WAIT / HOLD'}, "
@@ -392,22 +489,41 @@ def main():
                         status += ' · Gradual hand motion'
                     if getattr(controller,'reach_errors',{}).get(selected,0)>.005:
                         status += ' · REACH LIMIT: move target closer'
+                # The REC timer updates the panel only, not the terminal.
                 if status != last_status:
                     print(status, flush=True)
-                    panel.status(status)
                     last_status = status
+                note = recorder.status_text(data) if recorder else record_notice
+                panel_status = status + (" · " + note if note else "")
+                if panel_status != last_panel_status:
+                    panel.status(panel_status)
+                    last_panel_status = panel_status
                 viewer.sync()
                 time.sleep(max(0, 0.01 - (time.monotonic() - frame_start)))
     except KeyboardInterrupt:
         pass
+    except Exception as exc:
+        if recorder and recorder.recording:
+            recorder.event(data, "error", message=f"{type(exc).__name__}: {exc}")
+            end_reason = "error"
+        raise
     finally:
+        if recorder and recorder.recording:
+            try:
+                recorder.stop(data, end_reason)
+            except Exception as exc:
+                from episode_recorder import scrub
+                print(f"Could not save the current episode: {scrub(exc)}", flush=True)
         if panel:
             panel.close()
         if bridge:
             bridge.close()
         if args.screenshot:
             save_screenshot(model, data, args.screenshot)
-        print("Stopped. No data saved (except an explicitly requested screenshot).", flush=True)
+        if recorder and recorder.saved:
+            print(f"Stopped. {len(recorder.saved)} episode(s) saved this session.", flush=True)
+        else:
+            print("Stopped. No data saved (except an explicitly requested screenshot).", flush=True)
 
 
 if __name__ == "__main__":
