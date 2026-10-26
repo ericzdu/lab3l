@@ -188,6 +188,63 @@ def reset_scene(data, controller, mapper, finger_motion=None, recorder=None):
         mapper.invalidate(side)
 
 
+def calibrate_side(data, controller, mapper, side, sample, recenter=False):
+    """C for one side (or --auto-recenter): anchor tracking at the current wrist pose.
+
+    The robot target becomes the achieved wrist pose and the mapping is
+    relative to the current tracked wrist, so the arm cannot jump.
+    """
+    if recenter and side not in mapper.previous_scales:
+        return None, False
+    controller.set_target(side, data.site_xpos[controller.sites[side]])
+    rotation = data.site_xmat[controller.sites[side]].reshape(3, 3).copy()
+    controller.rotations[side] = rotation.copy()
+    controller.set_rotation(side, rotation)
+    direction = (controller.forearm_direction(data, side)
+                 if hasattr(controller, "forearm_direction") else None)
+    anchor = mapper.recenter if recenter else mapper.calibrate
+    result = anchor(side, sample[2], controller.targets[side], rotation,
+                    forearm=sample[3], robot_forearm=direction)
+    return direction, result is not False
+
+
+class AutoRecenter:
+    """--auto-recenter: re-anchor a side after a short tracking gap.
+
+    Only a side that was calibrated (following) when its tracking went stale
+    qualifies, and only if it is fresh again within `window` seconds.
+    Longer gaps, pauses, H and manual C fall back to the default: press C.
+    """
+    def __init__(self, window=3.):
+        if not np.isfinite(window) or window <= 0:
+            raise ValueError("Recenter window must be positive and finite")
+        self.window = window
+        self.lost_at = {}
+        self.auto_until = {}
+
+    def update(self, now, fresh, mapper):
+        """Call each frame BEFORE stale sides are invalidated; returns [(side, gap)] to recenter."""
+        due = []
+        for side in SIDES:
+            if not fresh[side]:
+                if side in mapper.origins:
+                    self.lost_at[side] = now
+            elif side in self.lost_at:
+                gap = now - self.lost_at.pop(side)
+                if gap <= self.window and side not in mapper.origins:
+                    due.append((side, gap))
+        return due
+
+    def recentered(self, side, now):
+        self.auto_until[side] = now + 1.
+
+    def showing(self, side, now):
+        return self.auto_until.get(side, -np.inf) > now
+
+    def forget(self):
+        self.lost_at.clear()
+
+
 def video_size(text):
     try:
         width, height = (int(value) for value in text.lower().split("x"))
@@ -219,6 +276,11 @@ def parse_args():
     parser.add_argument("--demo", action="store_true", help="Offline scripted arm motion, not human data")
     parser.add_argument("--headless", action="store_true", help="Run offline physics without an interactive viewer")
     parser.add_argument("--screenshot", help="Save a PNG at exit")
+    parser.add_argument("--auto-recenter", action="store_true",
+                        help="Live only: after a tracking gap shorter than --recenter-window, re-anchor "
+                             "that (previously calibrated) arm instead of waiting for C (default: off)")
+    parser.add_argument("--recenter-window", type=float, default=3.0,
+                        help="Seconds a gap may last for --auto-recenter (default 3.0)")
     recording = parser.add_argument_group("episode recording (--wrist human --workspace only)")
     recording.add_argument("--record-dir", default=None,
                            help="Episode folder (default: data/episodes in the project)")
@@ -240,6 +302,10 @@ def parse_args():
         parser.error("Use live tracking or the offline demo, not both")
     if args.seconds < 0 or not np.isfinite(args.seconds):
         parser.error("--seconds must be finite and nonnegative")
+    if not np.isfinite(args.recenter_window) or args.recenter_window <= 0:
+        parser.error("--recenter-window must be positive and finite")
+    if args.auto_recenter and not args.address:
+        parser.error("--auto-recenter needs live tracking (--address)")
     if len(args.operator) > 32:
         parser.error("--operator must be at most 32 characters")
     from episode_recorder import TASK_PATTERN
@@ -297,6 +363,7 @@ def main():
             max_seconds=args.max_episode_seconds, auto_label=not args.no_auto_label)
     record_notice = None
     end_reason = "viewer_closed"
+    auto_recenter = AutoRecenter(args.recenter_window) if bridge and args.auto_recenter else None
 
     events = SimpleQueue()
     selected, paused, overview = "right", False, False
@@ -312,7 +379,9 @@ def main():
     if bridge:
         print("LIVE: face forward, hold hands comfortably, then press C in Hand controls.", flush=True)
         print("C: calibrate/recenter wrist position AND orientation. Fingers use the previous mapping.", flush=True)
-        print("After a tracking interruption or pause, press C again.", flush=True)
+        print("After a tracking interruption or pause, press C again." +
+              (f" Auto-recenter: gaps under {args.recenter_window:g} s re-anchor by themselves."
+               if auto_recenter else ""), flush=True)
         if args.wrist == "human":
             print("Optional 27-point forearm tracking: panel shows ON / press C / unavailable.", flush=True)
             print("Forearm guides elbow posture; shoulder is fixed, not full-body tracking.", flush=True)
@@ -345,6 +414,8 @@ def main():
                 fresh = {side: side in samples and frame_start - samples[side][0] < 0.5
                          and not error for side in SIDES}
                 with viewer.lock():
+                    due = (auto_recenter.update(frame_start, fresh, mapper)
+                           if auto_recenter and not paused and not error else [])
                     # Reacquisition must not produce a jump from an old origin.
                     for side in SIDES:
                         if bridge and not fresh[side]:
@@ -353,6 +424,13 @@ def main():
                             # No current direction -> ordinary wrist-only IK.
                             controller.set_forearm_target(side, None if not fresh[side] else
                                 mapper.forearm_target(side, samples[side][3]))
+                    for side, gap in due:
+                        # Default rule is "press C"; this is the opt-in shortcut.
+                        if calibrate_side(data, controller, mapper, side, samples[side], recenter=True)[1]:
+                            auto_recenter.recentered(side, frame_start)
+                            print(f"Auto-recentered {side} wrist after a {gap:.1f} s tracking gap", flush=True)
+                            if recorder and recorder.recording:
+                                recorder.event(data, "auto_recenter", side=side, gap_s=round(gap, 3))
                     while True:
                         try:
                             key = events.get_nowait()
@@ -370,11 +448,15 @@ def main():
                             paused = not paused
                             for side in SIDES:
                                 mapper.invalidate(side)
+                            if auto_recenter:
+                                auto_recenter.forget()
                             if recorder:
                                 recorder.event(data, "pause" if paused else "resume")
                             print("PAUSED" if paused else "RESUMED (live arms need C)", flush=True)
                         elif key == glfw.KEY_H:
                             reset_scene(data, controller, mapper, finger_motion, recorder)
+                            if auto_recenter:
+                                auto_recenter.forget()
                             print("Reset to home; live arms need C", flush=True)
                         elif key == glfw.KEY_E:
                             record_notice = toggle_recording(recorder, data,
@@ -384,16 +466,11 @@ def main():
                                 recorder.discard()
                         elif key == glfw.KEY_C and bridge and not paused:
                             calibrated=[]
+                            if auto_recenter:
+                                auto_recenter.forget()
                             for side in SIDES:
                                 if fresh[side]:
-                                    controller.set_target(side, data.site_xpos[controller.sites[side]])
-                                    rotation = data.site_xmat[controller.sites[side]].reshape(3, 3).copy()
-                                    controller.rotations[side] = rotation.copy()
-                                    controller.set_rotation(side, rotation)
-                                    direction = (controller.forearm_direction(data, side)
-                                        if hasattr(controller, "forearm_direction") else None)
-                                    mapper.calibrate(side, samples[side][2], controller.targets[side], rotation,
-                                        forearm=samples[side][3], robot_forearm=direction)
+                                    direction, _ = calibrate_side(data, controller, mapper, side, samples[side])
                                     calibrated.append(side)
                                     print(f"Calibrated {side} wrist", flush=True)
                                     if direction is not None:
@@ -474,6 +551,8 @@ def main():
                     status = " | ".join(
                         f"{side}: {'LIVE' if fresh[side] else 'WAIT / HOLD'}, "
                         f"arm {'FOLLOW' if side in mapper.origins else 'press C'}" +
+                        (" (auto)" if auto_recenter and side in mapper.origins
+                            and auto_recenter.showing(side, frame_start) else "") +
                         ((", forearm " + ("unavailable" if not fresh[side] or samples[side][3] is None
                             else "ON" if side in mapper.forearm_alignments else "press C"))
                             if args.wrist == "human" else "") +
