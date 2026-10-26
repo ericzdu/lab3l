@@ -1,4 +1,8 @@
-"""Replay recorded Shadow Hand states from an NPZ or HDF5 demonstration."""
+"""Replay recorded Shadow Hand states from an NPZ or HDF5 demonstration.
+
+Also replays lab3l.episode recordings of the human-arm workspace (arms, hands
+and cup) and, if the episode is labeled, prints phase transitions.
+"""
 import argparse
 import math
 import glfw
@@ -13,6 +17,49 @@ from collect_mock_demo import PROJECT_ROOT  # Also configures the model cache.
 from replay_data import load_demo, validate_model
 
 
+def episode_model(metadata):
+    """Build the recorded scene and require identical joint/actuator layout."""
+    scene = metadata.get("scene", {})
+    if scene.get("wrist_mode") != "human":
+        raise ValueError(f"Unsupported episode wrist mode: {scene.get('wrist_mode')!r}")
+    from human_arms import build_human_model
+    model = build_human_model(workspace=bool(scene.get("workspace")))
+    recorded = metadata.get("model", {})
+    for kind, count, name in (("joint_names", model.njnt, model.joint),
+                              ("actuator_names", model.nu, model.actuator)):
+        current = [name(i).name for i in range(count)]
+        if recorded.get(kind) != current:
+            raise ValueError(f"Episode {kind} do not match the current human-arm model; "
+                             "it was recorded with a different scene version")
+    return model
+
+
+class PhaseAnnouncer:
+    """Print labeled phase changes as playback crosses them."""
+    def __init__(self, labels):
+        self.segments = (labels or {}).get("segments") or []
+        self.outcome = (labels or {}).get("outcome")
+        self.next = 0
+        self.current = ""
+
+    def update(self, time):
+        while self.next < len(self.segments) and self.segments[self.next]["start_t"] <= time + 1e-9:
+            segment = self.segments[self.next]
+            self.current = f"{segment['phase']} ({segment.get('side') or '-'}, conf {segment['confidence']:.2f})"
+            print(f"t={segment['start_t']:6.2f}s  phase: {self.current}", flush=True)
+            self.next += 1
+        return self.current
+
+    def finish(self):
+        if not self.outcome:
+            return
+        if self.outcome.get("success") is None:
+            print(f"Outcome: {self.outcome.get('outcome', 'not evaluated')}")
+        else:
+            result = "SUCCESS" if self.outcome["success"] else f"FAIL ({self.outcome['failure_reason']})"
+            print(f"Outcome: {result}, confidence {self.outcome['confidence']:.2f}")
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("file", type=str, help=".h5, .hdf5, or .npz demonstration")
@@ -25,7 +72,9 @@ def main():
     comparison = None
     try:
         arrays = load_demo(args.file, args.demo)
-        if "qpos" not in arrays:
+        if "_metadata" in arrays:
+            model = episode_model(arrays["_metadata"])
+        elif "qpos" not in arrays:
             from view_dual_shadow_hands import build_model
             from holos_replay import retarget_holos
             source = arrays
@@ -39,6 +88,9 @@ def main():
     except (ValueError, OSError, RuntimeError, KeyError) as exc:
         parser.error(str(exc))
     data = mujoco.MjData(model)
+    phases = PhaseAnnouncer(arrays.get("_labels"))
+    if "_metadata" in arrays and not arrays.get("_labels"):
+        print("Episode is not labeled; run scripts/label_episode.py to add phases.")
     if comparison:
         data.mocap_pos[:] = [0, 0, -10]
 
@@ -56,6 +108,7 @@ def main():
     if args.headless:
         for index in range(len(arrays["timestamp"])):
             restore(index)
+            phases.update(data.time)
     else:
         restore(0)
         def key_callback(key):
@@ -64,6 +117,10 @@ def main():
                 print("Rising smoke: " + ("ON" if comparison.smoke else "OFF"))
 
         with mujoco.viewer.launch_passive(model, data, key_callback=key_callback) as viewer:
+            if "_metadata" in arrays:
+                from view_dual_arms import configure_camera
+                with viewer.lock():
+                    configure_camera(viewer.cam)
             if comparison:
                 with viewer.lock():
                     viewer.cam.lookat[:] = comparison.lookat
@@ -89,6 +146,9 @@ def main():
                         restore(index)
                         if comparison:
                             comparison.draw(viewer.user_scn, index)
+                    phase = phases.update(data.time)
+                    if phase and hasattr(viewer, "set_texts"):
+                        viewer.set_texts((None, mujoco.mjtGridPos.mjGRID_TOPLEFT, "Phase", phase))
                     last_index = index
                 viewer.sync()
                 if index == len(timestamps) - 1:
@@ -96,6 +156,7 @@ def main():
                 time.sleep(max(0., 1 / 30 - (time.monotonic() - frame_start)))
     if comparison and hasattr(comparison, "plume"):
         print(f"Smoke surface interactions: {comparison.plume.collisions}")
+    phases.finish()
     print(f"Replay finished: {args.file}")
 
 

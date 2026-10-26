@@ -1,5 +1,7 @@
 """Headless episode recording: scripted targets and a fake tracking stream only."""
 import json
+import subprocess
+import sys
 import tempfile
 import time
 import unittest
@@ -98,6 +100,24 @@ class RecorderTests(unittest.TestCase):
         self.assertEqual(len(metadata["model"]["actuator_names"]), self.model.nu)
         self.assertIsNone(metadata["labels"])
         self.assertEqual([e["kind"] for e in events], ["record_start", "pause", "record_stop"])
+        # The existing replay path accepts episodes.
+        from replay_data import load_demo, validate_model
+        loaded = load_demo(directory / "episode.h5")
+        validate_model(loaded, self.model)
+        self.assertEqual(loaded["_metadata"]["episode_id"], directory.name)
+        self.assertIsNone(loaded["_labels"])
+        np.testing.assert_array_equal(loaded["timestamp"], times)
+        script = Path(__file__).with_name("replay_demo.py")
+        result = subprocess.run([sys.executable, str(script), str(directory / "episode.h5"), "--headless"],
+                                capture_output=True, text=True, timeout=120)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("Replay finished", result.stdout)
+        # A changed scene layout is refused with a clear error.
+        from replay_demo import episode_model
+        changed = json.loads(json.dumps(metadata))
+        changed["model"]["actuator_names"][0] = "renamed"
+        with self.assertRaisesRegex(ValueError, "actuator_names do not match"):
+            episode_model(changed)
         # Next episode gets the next counter.
         recorder.start(self.data)
         self.assertTrue(recorder.directory.name.endswith("_0002"))
