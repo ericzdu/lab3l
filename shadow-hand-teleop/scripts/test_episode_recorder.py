@@ -49,12 +49,13 @@ class RecorderTests(unittest.TestCase):
         self.dir = Path(self.tmp.name) / "episodes"
 
     def recorder(self, **kwargs):
-        options = dict(record_dir=self.dir, source="scripted_demo", operator="NT", video=False)
+        options = dict(record_dir=self.dir, source="scripted_demo", operator="NT", video=False,
+                       auto_label=False)
         options.update(kwargs)
         return EpisodeRecorder(self.model, self.controller, self.hands, **options)
 
     def test_headless_round_trip_schema(self):
-        recorder = self.recorder()
+        recorder = self.recorder(auto_label=True)
         recorder.start(self.data)
         run(recorder, self.model, self.data, self.controller, 2.0)
         recorder.event(self.data, "pause")
@@ -98,20 +99,42 @@ class RecorderTests(unittest.TestCase):
         self.assertEqual(metadata["end_reason"], "user_stop")
         self.assertEqual(metadata["model"]["nq"], self.model.nq)
         self.assertEqual(len(metadata["model"]["actuator_names"]), self.model.nu)
-        self.assertIsNone(metadata["labels"])
+        # Auto-labeled: the scripted demo never touches the cup.
+        self.assertEqual(metadata["labels"]["outcome"]["failure_reason"], "never_touched")
+        self.assertEqual(recorder.status_text(self.data), f"Saved ep 0001 · FAIL (never_touched)")
         self.assertEqual([e["kind"] for e in events], ["record_start", "pause", "record_stop"])
         # The existing replay path accepts episodes.
         from replay_data import load_demo, validate_model
         loaded = load_demo(directory / "episode.h5")
         validate_model(loaded, self.model)
         self.assertEqual(loaded["_metadata"]["episode_id"], directory.name)
-        self.assertIsNone(loaded["_labels"])
+        self.assertEqual(loaded["_labels"]["phase_names"][0], "idle")
+        self.assertEqual(len(loaded["_labels"]["phase"]), n)
         np.testing.assert_array_equal(loaded["timestamp"], times)
         script = Path(__file__).with_name("replay_demo.py")
         result = subprocess.run([sys.executable, str(script), str(directory / "episode.h5"), "--headless"],
                                 capture_output=True, text=True, timeout=120)
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn("Replay finished", result.stdout)
+        self.assertIn("phase: idle", result.stdout)
+        self.assertIn("Outcome: FAIL (never_touched)", result.stdout)
+        # Re-labeling via the CLI is idempotent; summarize lists the episode.
+        cli = lambda name, *args: subprocess.run(
+            [sys.executable, str(Path(__file__).with_name(name)), *map(str, args)],
+            capture_output=True, text=True, timeout=120)
+        before = (directory / "episode.json").read_text()
+        for _ in range(2):
+            result = cli("label_episode.py", directory)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertIn("FAIL (never_touched)", result.stdout)
+            self.assertEqual((directory / "episode.json").read_text(), before)
+        result = cli("label_episode.py", self.dir, "--dry-run")
+        self.assertIn("Dry run", result.stdout)
+        csv_path = Path(self.tmp.name) / "summary.csv"
+        result = cli("summarize_episodes.py", self.dir, "--csv", csv_path)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn(directory.name, result.stdout)
+        self.assertIn("never_touched", csv_path.read_text())
         # A changed scene layout is refused with a clear error.
         from replay_demo import episode_model
         changed = json.loads(json.dumps(metadata))
@@ -301,6 +324,19 @@ class RecorderTests(unittest.TestCase):
         self.assertEqual(metadata["video"]["status"], "unavailable: RuntimeError: no GL context")
         self.assertFalse(list(directory.glob("*.mp4")))
         self.assertGreater(metadata["samples"], 20)
+
+    def test_labeler_failure_keeps_recording(self):
+        from unittest.mock import patch
+        recorder = self.recorder(auto_label=True)
+        recorder.start(self.data)
+        run(recorder, self.model, self.data, self.controller, .3)
+        with patch("episode_labels.label_episode", side_effect=RuntimeError("boom")):
+            directory = recorder.stop(self.data, "user_stop")
+        metadata = json.loads((directory / "episode.json").read_text())
+        self.assertIsNone(metadata["labels"])
+        self.assertTrue((directory / "episode.h5").exists())
+        with h5py.File(directory / "episode.h5") as file:
+            self.assertNotIn("labels", file)
 
     def test_scene_or_argument_errors_are_loud(self):
         with self.assertRaisesRegex(ValueError, "requires"):

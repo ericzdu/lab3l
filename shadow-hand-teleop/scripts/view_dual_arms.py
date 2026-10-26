@@ -294,7 +294,7 @@ def main():
             source="live" if bridge else "scripted_demo" if args.demo else "keyboard",
             wrist_mode=args.wrist, workspace=args.workspace, scale=args.scale,
             video=args.video, video_fps=args.video_fps, video_size=args.video_size,
-            max_seconds=args.max_episode_seconds)
+            max_seconds=args.max_episode_seconds, auto_label=not args.no_auto_label)
     record_notice = None
     end_reason = "viewer_closed"
 

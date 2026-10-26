@@ -224,7 +224,7 @@ class EpisodeRecorder:
     def __init__(self, model, controller, hands, *, record_dir=DEFAULT_RECORD_DIR,
                  task="cup_to_tray", operator="", source="keyboard", wrist_mode="human",
                  workspace=True, scale=0.6, video=True, video_fps=30, video_size=(640, 480),
-                 max_seconds=120.0):
+                 max_seconds=120.0, auto_label=True):
         if source not in SOURCES:
             raise ValueError(f"source must be one of {SOURCES}")
         if not TASK_PATTERN.match(task):
@@ -245,6 +245,7 @@ class EpisodeRecorder:
             # Also raises model.vis.global_.offwidth/offheight before any renderer.
             self.video = EpisodeVideo(model, fps=video_fps, size=tuple(video_size))
         self.max_seconds = float(max_seconds)
+        self.auto_label = auto_label
         self.contacts = ContactTables(model)
         self.layout = dataset_layout(model)
         self.cup_body = model.body("cup").id
@@ -463,12 +464,26 @@ class EpisodeRecorder:
             video = {"status": self.video.status}
         metadata = self.metadata(end_reason, count, arrays["time/sim"][-1], video)
         self._write(directory, arrays, metadata)
+        if self.auto_label:
+            metadata = self._label(directory, arrays, metadata)
         self.last_saved = (self.counter, metadata)
         self.saved.append(directory)
         self.notice = None
         print(f"Saved episode: {relative_path(directory)} ({count} samples, "
               f"{metadata['duration_sim_s']:.1f} s sim, end: {end_reason})", flush=True)
         return directory
+
+    def _label(self, directory, arrays, metadata):
+        """Auto-label; a labeler failure never loses the recording."""
+        try:
+            from episode_labels import label_episode, summary_line, write_labels
+            labels = label_episode(arrays, metadata)
+            metadata = write_labels(directory / "episode.h5", labels)
+            print("Labels: " + summary_line(metadata["episode_id"], labels), flush=True)
+        except Exception as exc:
+            print(f"Labeling failed; episode kept with labels: null ({type(exc).__name__}: "
+                  f"{scrub(exc)})", flush=True)
+        return metadata
 
     def _write(self, directory, arrays, metadata):
         import h5py
