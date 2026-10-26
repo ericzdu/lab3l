@@ -37,6 +37,7 @@ WRAP_BAND = .02       # m; ... at the cup's mid-height +/- this
 MAX_PENETRATION = .005  # m; deeper hand-cup overlap is not a usable wrap
 MIN_CLEARANCE = .03   # m from every clip/reach limit
 SETTLED_ERROR = .01   # m; achieved wrist within this of the clipped target
+REFINE_COUNT = 12     # coarse points per side/orientation refined at half the step
 FINGERS = [CONTACT_GROUPS.index(name) for name in ("ff", "mf", "rf", "lf")]
 THUMB = CONTACT_GROUPS.index("thumb")
 PALM = CONTACT_GROUPS.index("palm")
@@ -151,35 +152,74 @@ def grid_axis(low, high, step):
     return np.round(np.arange(low, high + step / 2, step), 6)
 
 
+def probe_point(probe, side, name, offset, rotation, settle):
+    """Clip, settle and measure one wrist target (offset from home)."""
+    controller = probe.controller
+    clearance = limit_clearance(controller, side, controller.home[side] + offset)
+    target = controller.targets[side].copy()
+    record = dict(side=side, orientation=name, offset=[round(float(v), 6) for v in offset],
+                  target=target.tolist(), reach_error=float(controller.reach_errors[side]),
+                  clearance=clearance)
+    if clearance < -1e-9:
+        # Clipped targets are not settled: the arm would stop at the limit.
+        return record | dict(settled=False)
+    achieved = probe.settle(side, target, rotation, settle)
+    record.update(settled=True, achieved=achieved.tolist(),
+                  error=float(np.linalg.norm(achieved - target)), **probe.measure(side))
+    return record
+
+
+def start_probe(side, name):
+    probe = Probe()
+    probe.reset()
+    rotation = orientation(probe.controller, side, name)
+    # Turn the wrist at home first so every point starts from the same posture.
+    probe.settle(side, probe.controller.home[side].copy(), rotation, 1.5, minimum=1.)
+    return probe, rotation
+
+
 def probe_slice(job):
     """Worker: one (side, orientation, dx) slice, serpentine-ordered for warm starts."""
     side, name, dx, step, settle = job
-    probe = Probe()
-    probe.reset()
-    controller = probe.controller
-    rotation = orientation(controller, side, name)
-    home = controller.home[side].copy()
-    # Turn the wrist at home first so every point starts from the same posture.
-    probe.settle(side, home, rotation, 1.5, minimum=1.)
+    probe, rotation = start_probe(side, name)
     records = []
     dys = grid_axis(CLIP_LOW[side][1], CLIP_HIGH[side][1], step)
     for k, dz in enumerate(grid_axis(CLIP_LOW[side][2], CLIP_HIGH[side][2], step)):
         for dy in (dys if k % 2 == 0 else dys[::-1]):
-            requested = home + [dx, dy, dz]
-            clearance = limit_clearance(controller, side, requested)
-            target = controller.targets[side].copy()
-            record = dict(side=side, orientation=name, offset=[float(dx), float(dy), float(dz)],
-                          target=target.tolist(), reach_error=float(controller.reach_errors[side]),
-                          clearance=clearance)
-            if clearance < -1e-9:
-                # Clipped targets are not settled: the arm would stop at the limit.
-                records.append(record | dict(settled=False))
-                continue
-            achieved = probe.settle(side, target, rotation, settle)
-            record.update(settled=True, achieved=achieved.tolist(),
-                          error=float(np.linalg.norm(achieved - target)), **probe.measure(side))
-            records.append(record)
+            records.append(probe_point(probe, side, name, np.array([dx, dy, dz]), rotation, settle))
     return records
+
+
+def refine_point(job):
+    """Worker: a 3x3x3 grid at half the step around one coarse grid point."""
+    side, name, centre, step, settle = job
+    probe, rotation = start_probe(side, name)
+    probe.settle(side, probe.controller.home[side] + centre, rotation, settle)
+    records = []
+    for delta in np.stack(np.meshgrid(*[[-step / 2, 0, step / 2]] * 3, indexing="ij"), -1).reshape(-1, 3):
+        if not delta.any():
+            continue
+        records.append(probe_point(probe, side, name, np.asarray(centre) + delta, rotation, settle)
+                       | dict(refined=True))
+    return records
+
+
+def refine_candidates(records, count=REFINE_COUNT):
+    """Coarse palm-inward points that nearly wrap the cup, to refine.
+
+    Ranked by how many hand groups are within WRAP_DISTANCE of the cup, then
+    by overlap; seeds may overlap the cup a little, since half a step away
+    they may not.
+    """
+    jobs = []
+    for side in SIDES:
+        for name in ORIENTATIONS[1:]:
+            rows = [r for r in records if r["side"] == side and r["orientation"] == name
+                    and r.get("settled") and -3 * MAX_PENETRATION <= r["cup"] < WRAP_DISTANCE]
+            near = lambda r: sum(gap <= WRAP_DISTANCE for gap in r["cup_groups"])
+            rows.sort(key=lambda r: (-near(r), abs(r["cup"])))
+            jobs += [(side, name, r["offset"]) for r in rows[:count]]
+    return jobs
 
 
 def wrap_kind(record):
@@ -187,8 +227,9 @@ def wrap_kind(record):
 
     With the Shadow hand turned palm-inward the open thumb lies about 8 cm
     above the finger plane, so its nearest cup point is usually the top rim.
-    "rim" accepts that: palm and a finger group at mid-height, thumb within
-    WRAP_DISTANCE of the cup anywhere (in practice on the rim).
+    "rim" accepts that: a finger group at mid-height, and palm and thumb within
+    WRAP_DISTANCE of the cup anywhere (a flat palm's nearest point along a
+    line contact has no meaningful height; the thumb is in practice on the rim).
     """
     if not record.get("settled") or record["orientation"] == "palm_down":
         return None
@@ -202,7 +243,7 @@ def wrap_kind(record):
         return None
     if near(THUMB):
         return "strict"
-    if near(THUMB, band=False) and near(PALM):
+    if near(THUMB, band=False) and near(PALM, band=False):
         return "rim"
     return None
 
@@ -244,8 +285,9 @@ def summarize(records, sides):
         mine = [r for r in records if r["side"] == side]
         settled = [r for r in mine if r.get("settled")]
         home = controller.home[side]
-        lines.append(f"\n{side}: home {np.round(home, 3).tolist()}; {len(mine)} targets, "
-                     f"{len(settled)} inside the limits and settled")
+        refined = sum(1 for r in mine if r.get("refined"))
+        lines.append(f"\n{side}: home {np.round(home, 3).tolist()}; {len(mine) - refined} grid targets "
+                     f"+ {refined} refined near the cup, {len(settled)} inside the limits and settled")
         summary = dict(home=home.tolist(), targets=len(mine), settled=len(settled))
         if settled:
             low = min(settled, key=lambda r: r["achieved"][2])
@@ -294,17 +336,25 @@ def summarize(records, sides):
 
 
 def run(sides=SIDES, step=.02, settle=3., workers=None, orientations=ORIENTATIONS):
+    """Coarse grid, then a half-step refinement around the closest palm-inward points.
+
+    A wrap needs gaps within 1 cm, finer than the 2 cm grid, so the
+    refinement is what usually finds it.
+    """
     jobs = []
     for side in sides:
         for name in orientations:
             for dx in grid_axis(CLIP_LOW[side][0], CLIP_HIGH[side][0], step):
                 jobs.append((side, name, float(dx), step, settle))
     workers = workers or max(1, (os.cpu_count() or 2) - 1)
-    if workers == 1:
-        results = map(probe_slice, jobs)
-        return [r for chunk in results for r in chunk]
-    with ProcessPoolExecutor(max_workers=workers) as pool:
-        return [r for chunk in pool.map(probe_slice, jobs) for r in chunk]
+    def gather(function, items):
+        if workers == 1:
+            return [r for chunk in map(function, items) for r in chunk]
+        with ProcessPoolExecutor(max_workers=workers) as pool:
+            return [r for chunk in pool.map(function, items) for r in chunk]
+    records = gather(probe_slice, jobs)
+    fine = [(side, name, offset, step, settle) for side, name, offset in refine_candidates(records)]
+    return records + gather(refine_point, fine)
 
 
 def parse_args(argv=None):
