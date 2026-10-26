@@ -20,6 +20,14 @@ from view_dual_shadow_hands import build_model
 
 
 class TrackingBridge:
+    """Latest per-side packet, read by the viewer loop.
+
+    Each side maps to (receipt time, finger targets). With with_wrist=True
+    the tuple continues: [2] validated wrist transform, [3] forearm vector or
+    None, [4] raw (25,4,4) finger skeleton copy, [5] raw 27-point arm skeleton
+    copy or None, [6] bridge-wide packet sequence number. Indices 0-3 are
+    relied on elsewhere and never change.
+    """
     def __init__(self, factory, address, with_wrist=False):
         self.lock = threading.Lock()
         self.stop = threading.Event()
@@ -36,6 +44,7 @@ class TrackingBridge:
             self.streamer = self.factory(ip=self.address, record=False,
                                          benchmark_quiet=True, verbose=False)
             previous = None
+            sequence = -1
             while not self.stop.is_set():
                 sample = self.streamer.get_latest()
                 if sample is not None:
@@ -44,6 +53,7 @@ class TrackingBridge:
                     raw = sample._raw
                     if raw is not previous:
                         previous = raw
+                        sequence += 1
                         packet = {}
                         for side in ("left", "right"):
                             try:
@@ -61,6 +71,16 @@ class TrackingBridge:
                                     except KeyError:
                                         arm = None
                                     entry = (*entry, forearm_vector(arm, wrist))
+                                    # Raw input for recording; retargeters change,
+                                    # so recordings must keep what was received.
+                                    fingers = np.array(sample[f"{side}_fingers"], dtype=float)
+                                    raw_arm = None
+                                    if arm is not None:
+                                        try:
+                                            raw_arm = np.array(arm, dtype=float)
+                                        except (ValueError, TypeError):
+                                            raw_arm = None
+                                    entry = (*entry, fingers, raw_arm, sequence)
                                 packet[side] = entry
                             except (ValueError, KeyError, TypeError):
                                 pass
