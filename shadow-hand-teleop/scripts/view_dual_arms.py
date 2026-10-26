@@ -193,8 +193,8 @@ def video_size(text):
         width, height = (int(value) for value in text.lower().split("x"))
     except ValueError:
         raise argparse.ArgumentTypeError("expected WIDTHxHEIGHT, for example 640x480")
-    if not (16 <= width <= 4096 and 16 <= height <= 4096):
-        raise argparse.ArgumentTypeError("video size must be 16-4096 pixels per side")
+    if not (16 <= width <= 4096 and 16 <= height <= 4096) or width % 2 or height % 2:
+        raise argparse.ArgumentTypeError("video size must be even, 16-4096 pixels per side")
     return width, height
 
 
@@ -514,6 +514,8 @@ def main():
             except Exception as exc:
                 from episode_recorder import scrub
                 print(f"Could not save the current episode: {scrub(exc)}", flush=True)
+        if recorder:
+            recorder.close()
         if panel:
             panel.close()
         if bridge:

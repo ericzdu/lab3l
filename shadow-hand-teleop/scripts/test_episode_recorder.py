@@ -217,6 +217,71 @@ class RecorderTests(unittest.TestCase):
         self.assertAlmostEqual(metadata["duration_sim_s"], .3, delta=.011)
         self.assertRegex(short.status_text(self.data), r"^Saved ep \d{4} · unlabeled$")
 
+    def test_video_frames_match_alignment_datasets(self):
+        import mujoco
+        try:
+            mujoco.Renderer(self.model, height=120, width=160).close()
+        except Exception as exc:
+            self.skipTest(f"offscreen rendering unavailable: {exc}")
+        import imageio_ffmpeg
+        recorder = self.recorder(video=True, video_fps=10, video_size=(160, 120))
+        try:
+            recorder.start(self.data)
+            run(recorder, self.model, self.data, self.controller, 2.0)
+            directory = recorder.stop(self.data, "user_stop")
+        finally:
+            recorder.close()
+        metadata = json.loads((directory / "episode.json").read_text())
+        video = metadata["video"]
+        self.assertEqual(video["status"], "ok")
+        self.assertEqual(video["fps"], 10)
+        with h5py.File(directory / "episode.h5") as file:
+            n = len(file["time/sim"])
+            sim = file["time/sim"][...]
+            for name in ("operator", "overview"):
+                path = directory / f"cam_{name}.mp4"
+                self.assertTrue(path.exists(), name)
+                frame_time = file[f"video/{name}/frame_time"][...]
+                index = file[f"video/{name}/sample_index"][...]
+                frames, _ = imageio_ffmpeg.count_frames_and_secs(str(path))
+                self.assertEqual(frames, len(frame_time), name)
+                self.assertEqual(frames, video["frames"][name])
+                self.assertGreaterEqual(video["dropped_frames"][name], 0)
+                expected = 2.0 * 10 - video["dropped_frames"][name]
+                self.assertLessEqual(abs(frames - expected), 1, name)
+                self.assertTrue(np.all(np.diff(frame_time) > 0))
+                self.assertTrue(((index >= 0) & (index < n)).all())
+                np.testing.assert_allclose(sim[index], frame_time)
+                camera = video["cameras"][name]
+                self.assertEqual((camera["width"], camera["height"]), (160, 120))
+                self.assertAlmostEqual(camera["fy"], 60 / np.tan(np.deg2rad(camera["fovy"]) / 2))
+                self.assertEqual((camera["cx"], camera["cy"]), (80, 60))
+        self.assertGreaterEqual(self.model.vis.global_.offwidth, 160)
+        self.assertIsNotNone(video["render_ms"]["mean"])
+        # Discard while encoding leaves nothing behind.
+        recorder = self.recorder(video=True, video_fps=10, video_size=(160, 120))
+        try:
+            recorder.start(self.data)
+            run(recorder, self.model, self.data, self.controller, .5)
+            directory = recorder.directory
+            recorder.discard()
+        finally:
+            recorder.close()
+        self.assertFalse(directory.exists())
+
+    def test_video_unavailable_keeps_recording_state(self):
+        from unittest.mock import patch
+        recorder = self.recorder(video=True, video_fps=10, video_size=(160, 120))
+        with patch("episode_video.mujoco.Renderer", side_effect=RuntimeError("no GL context")):
+            recorder.start(self.data)
+        self.assertIn("Video unavailable", recorder.status_text(self.data))
+        run(recorder, self.model, self.data, self.controller, .3)
+        directory = recorder.stop(self.data, "user_stop")
+        metadata = json.loads((directory / "episode.json").read_text())
+        self.assertEqual(metadata["video"]["status"], "unavailable: RuntimeError: no GL context")
+        self.assertFalse(list(directory.glob("*.mp4")))
+        self.assertGreater(metadata["samples"], 20)
+
     def test_scene_or_argument_errors_are_loud(self):
         with self.assertRaisesRegex(ValueError, "requires"):
             self.recorder(wrist_mode="spherical")

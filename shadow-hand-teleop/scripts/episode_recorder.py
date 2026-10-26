@@ -239,9 +239,11 @@ class EpisodeRecorder:
         self.record_dir = Path(record_dir)
         self.task, self.operator, self.source = task, operator, source
         self.wrist_mode, self.workspace, self.scale = wrist_mode, workspace, scale
-        self.video = video
-        self.video_fps = video_fps
-        self.video_size = tuple(video_size)
+        self.video = None
+        if video:
+            from episode_video import EpisodeVideo
+            # Also raises model.vis.global_.offwidth/offheight before any renderer.
+            self.video = EpisodeVideo(model, fps=video_fps, size=tuple(video_size))
         self.max_seconds = float(max_seconds)
         self.contacts = ContactTables(model)
         self.layout = dataset_layout(model)
@@ -279,6 +281,12 @@ class EpisodeRecorder:
         self.created = datetime.now(timezone.utc).isoformat(timespec="seconds")
         self.recording = True
         self.notice = None
+        if self.video is not None:
+            if self.video.available():
+                self.video.begin(self.directory)
+            else:
+                self.notice = "Video " + self.video.status
+                print(f"Recording state only. Video {self.video.status}", flush=True)
         self.event(data, "record_start", source=self.source)
         return self.directory
 
@@ -395,10 +403,14 @@ class EpisodeRecorder:
             self.buffers[name].append(np.asarray(value, dtype=self.layout[name][0]))
 
     def maybe_render(self, data):
-        """Video frames are added in a later step; state-only for now."""
+        """Main thread: render one due camera frame, if video is on."""
+        if (self.recording and self.video is not None and self.video.thread is not None
+                and self.time_base is not None):
+            self.video.maybe_render(data, data.time - self.time_base[0],
+                                    len(self.buffers["time/sim"]) - 1)
 
     # -- finishing ----------------------------------------------------------
-    def metadata(self, end_reason, samples, duration):
+    def metadata(self, end_reason, samples, duration, video):
         from workspace_scene import CUP_START, TABLE_TOP, TRAY_CENTER
         model = self.model
         return json_safe({
@@ -416,7 +428,7 @@ class EpisodeRecorder:
                       "actuator_names": [model.actuator(i).name for i in range(model.nu)]},
             "software": software_info(),
             "finger_target_names": FINGER_TARGET_NAMES,
-            "video": {"status": "disabled"},
+            "video": video,
             "labels": None,
         })
 
@@ -435,13 +447,21 @@ class EpisodeRecorder:
         directory = self.directory
         count = len(self.buffers["time/sim"])
         if not count:
+            if self.video is not None:
+                self.video.abort()
             shutil.rmtree(directory, ignore_errors=True)
             self.notice = f"Episode {self.counter:04d} had no samples (paused?); nothing saved"
             print(self.notice, flush=True)
             return None
         arrays = {name: np.stack(values) for name, values in self.buffers.items()}
         self.buffers = None
-        metadata = self.metadata(end_reason, count, arrays["time/sim"][-1])
+        video = {"status": "disabled"}
+        if self.video is not None and self.video.thread is not None:
+            frames, video = self.video.finish()
+            arrays.update(frames)
+        elif self.video is not None:
+            video = {"status": self.video.status}
+        metadata = self.metadata(end_reason, count, arrays["time/sim"][-1], video)
         self._write(directory, arrays, metadata)
         self.last_saved = (self.counter, metadata)
         self.saved.append(directory)
@@ -473,9 +493,16 @@ class EpisodeRecorder:
             return
         self.recording = False
         self.buffers = None
+        if self.video is not None:
+            self.video.abort()
         shutil.rmtree(self.directory, ignore_errors=True)
         self.notice = f"Discarded ep {self.counter:04d}"
         print(self.notice, flush=True)
+
+    def close(self):
+        """Release the renderer and encoder threads (call once at exit)."""
+        if self.video is not None:
+            self.video.close()
 
     def status_text(self, data):
         if self.recording:
