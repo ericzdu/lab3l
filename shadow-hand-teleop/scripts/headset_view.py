@@ -65,7 +65,7 @@ def draw_overlay(frame, lines):
 
 
 class HeadsetView:
-    def __init__(self, model, size=(960, 540), fps=20, camera="follow", budget=.012,
+    def __init__(self, model, size=(960, 540), fps=20, camera="follow", budget=.016,
                  clock=time.monotonic):
         width, height = (int(v) for v in size)
         if width % 2 or height % 2 or width < 16 or height < 16:

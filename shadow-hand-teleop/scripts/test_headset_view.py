@@ -335,14 +335,15 @@ class HeadsetViewTests(unittest.TestCase):
     def test_cli_requires_address(self):
         from view_dual_arms import parse_args
         for argv in (["--headset-view"], ["--address", "x", "--headset-view", "--headset-fps", "0"],
-                     ["--address", "x", "--headset-view", "--headset-size", "641x480"]):
+                     ["--address", "x", "--headset-view", "--headset-size", "641x480"],
+                     ["--address", "x", "--headset-view", "--headset-budget-ms", "0"]):
             with mock.patch.object(sys, "argv", ["view_dual_arms.py", *argv]), \
                     self.assertRaises(SystemExit), contextlib.redirect_stderr(io.StringIO()):
                 parse_args()
         with mock.patch.object(sys, "argv", ["view_dual_arms.py", "--address", "x", "--headset-view"]):
             args = parse_args()
-        self.assertEqual((args.headset_size, args.headset_fps, args.headset_camera),
-                         ((960, 540), 20, "follow"))
+        self.assertEqual((args.headset_size, args.headset_fps, args.headset_camera, args.headset_budget_ms),
+                         ((960, 540), 20, "follow", 16))
 
 
 if __name__ == "__main__":

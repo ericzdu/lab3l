@@ -354,6 +354,8 @@ def parse_args():
     headset.add_argument("--headset-fps", type=float, default=20, help="Target stream rate, wall clock (default 20)")
     headset.add_argument("--headset-camera", choices=("follow", "operator", "overview"), default="follow",
                          help="follow = whatever the Mac viewer shows (default); operator/overview = fixed views")
+    headset.add_argument("--headset-budget-ms", type=float, default=16,
+                         help="A headset frame costing more than this skips the next frame slot (default 16)")
     recording = parser.add_argument_group("episode recording (--wrist human --workspace only)")
     recording.add_argument("--record-dir", default=None,
                            help="Episode folder (default: data/episodes in the project)")
@@ -381,6 +383,8 @@ def parse_args():
         parser.error("--headset-view needs live tracking (--address)")
     if not np.isfinite(args.headset_fps) or not 0 < args.headset_fps <= 60:
         parser.error("--headset-fps must be in (0, 60]")
+    if not np.isfinite(args.headset_budget_ms) or args.headset_budget_ms <= 0:
+        parser.error("--headset-budget-ms must be positive and finite")
     if args.auto_recenter and not args.address:
         parser.error("--auto-recenter needs live tracking (--address)")
     if len(args.operator) > 32:
@@ -424,7 +428,7 @@ def main():
     if args.headset_view:
         from headset_view import HeadsetView
         headset = HeadsetView(model, size=args.headset_size, fps=args.headset_fps,
-                              camera=args.headset_camera)
+                              camera=args.headset_camera, budget=args.headset_budget_ms / 1000)
 
     bridge = None
     if args.address:

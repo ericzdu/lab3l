@@ -457,8 +457,11 @@ the stream fails (the terminal prints one line).
   window: someone at the Mac presses them.
 - **Cost:** defaults are `--headset-size 960x540 --headset-fps 20`.
   Each streamed frame is an extra offscreen render on the control thread,
-  about 15–20 ms whatever the size. A slow frame skips the next one, so the
-  stream may drop to about 10 fps while recording. With
+  about 15–20 ms whatever the size. A frame that costs more than
+  `--headset-budget-ms` (default 16) skips the next slot, so with `follow`
+  the stream may drop to about 9 fps while recording; a larger budget (for
+  example 25) keeps about 17 fps but costs the recorder more dropped video
+  frames. With
   `--headset-camera operator` and recording on, the recorder's operator frame
   is reused (letterboxed, 640x480) instead of rendering twice.
   `.venv/bin/mjpython scripts/bench_headset_view.py` measures this on your Mac;

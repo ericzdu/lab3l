@@ -45,10 +45,10 @@ class FakeStreamer:
         self.frame = frame
 
 
-def run(camera, size, fps, seconds, record_dir):
+def run(camera, size, fps, seconds, record_dir, budget=.016):
     import h5py
     model, data, controller, hands = setup("human", workspace=True)
-    headset = None if camera == "none" else HeadsetView(model, size=size, fps=fps, camera=camera)
+    headset = None if camera == "none" else HeadsetView(model, size=size, fps=fps, camera=camera, budget=budget)
     recorder = EpisodeRecorder(model, controller, hands, record_dir=record_dir, task="cup_to_tray",
                                source="scripted_demo", wrist_mode="human", workspace=True, scale=.6,
                                video=True, video_fps=30, video_size=(640, 480), max_seconds=3600,
@@ -99,10 +99,12 @@ def main():
     parser.add_argument("--size", type=video_size, default=(960, 540))
     parser.add_argument("--fps", type=float, default=20)
     parser.add_argument("--seconds", type=float, default=20)
+    parser.add_argument("--budget-ms", type=float, default=16)
     args = parser.parse_args()
     with tempfile.TemporaryDirectory() as folder:
-        period, video, stats = run(args.camera, args.size, args.fps, args.seconds, folder)
-    print(f"headset {args.camera} {args.size[0]}x{args.size[1]} @ {args.fps:g} fps, recording 30 fps video")
+        period, video, stats = run(args.camera, args.size, args.fps, args.seconds, folder, args.budget_ms / 1000)
+    print(f"headset {args.camera} {args.size[0]}x{args.size[1]} @ {args.fps:g} fps, budget {args.budget_ms:g} ms, "
+          "recording 30 fps video")
     print(f"loop period ms: median {np.median(period):.1f}  p95 {np.percentile(period, 95):.1f}  "
           f"max {period.max():.1f}")
     print(f"recorder render ms: mean {video['render_ms']['mean']:.1f}, dropped {video['dropped_frames']}")
