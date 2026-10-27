@@ -360,8 +360,8 @@ def parse_args():
                              "cup until it opens; recorded and flagged in episodes (default: off)")
     headset = parser.add_argument_group("headset view (live only): sim view as a 2D video window in Vision Pro")
     headset.add_argument("--headset-view", action="store_true", help="Stream the sim view to the headset")
-    # 960x540 @ 20 fps: 1280x720 @ 30 measured over the 15 ms loop budget
-    # with recording on (README "Headset view").
+    # 960x540 @ 20 fps: 1280x720 @ 30 goes over the render budget on about
+    # half its frames with recording on (README "Headset view").
     headset.add_argument("--headset-size", type=video_size, default=(960, 540),
                          help="Streamed WIDTHxHEIGHT (default 960x540)")
     headset.add_argument("--headset-fps", type=float, default=20, help="Target stream rate, wall clock (default 20)")

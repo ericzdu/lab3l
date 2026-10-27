@@ -480,14 +480,24 @@ the stream fails (the terminal prints one line).
   looking at the Mac. The C/E buttons are still in the Mac's Hand controls
   window: someone at the Mac presses them.
 - **Cost:** defaults are `--headset-size 960x540 --headset-fps 20`.
-  Each streamed frame is an extra offscreen render on the control thread,
-  about 15–20 ms whatever the size. A frame that costs more than
-  `--headset-budget-ms` (default 16) skips the next slot, so with `follow`
-  the stream may drop to about 9 fps while recording; a larger budget (for
-  example 25) keeps about 17 fps but costs the recorder more dropped video
-  frames. With
-  `--headset-camera operator` and recording on, the recorder's operator frame
-  is reused (letterboxed, 640x480) instead of rendering twice.
+  Each streamed frame is an extra offscreen render on the control thread.
+  A frame that costs more than `--headset-budget-ms` (default 16) skips the
+  next slot. Measured on the development Mac with nothing else running, while
+  recording 30 fps video (loop period median / p95):
+
+  | Headset view | Loop (ms) | Stream | Render | Recorder frames dropped |
+  |---|---|---|---|---|
+  | off | 12.0 / 13.8 | – | – | 2 |
+  | `follow` 960x540 @ 20 (default) | 13.2 / 28.4 | 17.7 fps | 13.8 ms | 12 |
+  | `operator` 960x540 @ 20 | 12.9 / 15.2 | 17.6 fps | 2.0 ms (reused) | 2 |
+  | `follow` 1280x720 @ 30 | 13.6 / 30.6 | 18.4 fps | 14.8 ms | 60 |
+
+  With `--headset-camera operator` and recording on, the recorder's operator
+  frame is reused (letterboxed, 640x480) instead of rendering twice, so it
+  is the cheapest choice. 1280x720 @ 30 goes over budget on almost half its
+  frames and drops five times as many recorder frames, so it is not the
+  default. With another simulation running, renders took about 17.6 ms and
+  the default stream fell to about 9 fps.
   `.venv/bin/mjpython scripts/bench_headset_view.py` measures this on your Mac;
   close other simulations first.
 
