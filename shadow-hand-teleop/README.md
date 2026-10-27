@@ -393,9 +393,9 @@ demonstrations.
 
 | Key / button (controls window) | Action |
 |---|---|
-| **E** · Record | Start an episode; press again to stop and save it |
+| **E** · Record | Start an episode; press again to stop and save it. Refuses to start (with a message) unless the cup is at its start pose: press H first |
 | **X** · Discard | Stop and delete the current episode |
-| **H** | Save the current episode (`end_reason="reset"`), then reset arms and cup |
+| **H** | Save the current episode (`end_reason="reset"`), then reset arms and cup. Within 3 s of E it discards instead (an accidental start) |
 | Space | Pause/resume; no samples are recorded while paused |
 | Esc / close a window | Save the current episode (`end_reason="viewer_closed"`) |
 
@@ -404,6 +404,7 @@ The status line shows `● REC 00:12.4 · ep 0007` while recording, then
 terminal prints the saved folder. Episodes auto-stop at
 `--max-episode-seconds`. In live mode press C before E; starting earlier is
 allowed but warns `REC started before calibration (press C)`.
+Routine for each attempt: **H** (reset) → **C** (calibrate) → **E** (record).
 
 Flags (the launchers forward extra arguments):
 
@@ -545,6 +546,14 @@ recorded contacts and cup motion. Thresholds are hand-chosen heuristics in
 `LabelConfig`, not yet tuned against human-labelled episodes. Confidence
 scores are heuristic too. The three confidence factors are stored per
 segment so the labeler can be recalibrated later.
+
+Labeler v2 rules (from the first live dataset): a **grasp** needs thumb plus
+another finger on the cup, or the cup actually lifting; touches without that
+count as reaching. Letting go above the tray and the cup landing in it within
+1 s is a **release** (`drop_in` event, `outcome.placement = "dropped_in"`;
+otherwise `"placed"`). Touches after a release without a grasp are
+`post_release_touch` events, not new grasps. Every grasp after the first
+counts as a regrasp. Re-run `label_episode.py` to relabel older episodes.
 
 ```bash
 .venv/bin/python scripts/label_episode.py data/episodes            # (re)label all; --dry-run to preview

@@ -8,13 +8,14 @@ import unittest
 from pathlib import Path
 
 import h5py
+import mujoco
 import numpy as np
 
 from arm_control import SIDES, WristMapper
 from episode_recorder import CONTACT_GROUPS, PROJECT_ROOT, SCHEMA, EpisodeRecorder, dataset_layout
 from hand_retargeting import FINGER_TARGET_NAMES, synthetic_skeleton
 from workspace_scene import CUP_START, SCENE_VERSION, TABLE_TOP, TRAY_CENTER
-from view_dual_arms import (RECORDING_REQUIRES, advance_physics, demo_targets, reset_scene,
+from view_dual_arms import (CUP_NOT_AT_START, RECORDING_REQUIRES, advance_physics, demo_targets, reset_scene,
                             setup, toggle_recording)
 
 
@@ -226,8 +227,18 @@ class RecorderTests(unittest.TestCase):
         self.assertFalse(recorder.recording)
         self.assertEqual(list(self.dir.iterdir()), [])
 
-        # H saves the episode with end_reason="reset", then resets the scene.
+        # H shortly after E discards (an accidental start), and still resets.
         mapper = WristMapper()
+        recorder.start(self.data)
+        run(recorder, self.model, self.data, self.controller, .2)
+        accidental = recorder.directory
+        reset_scene(self.data, self.controller, mapper, None, recorder)
+        self.assertFalse(recorder.recording)
+        self.assertFalse(accidental.exists())
+        self.assertEqual(self.data.time, 0)
+
+        # Past min_reset_seconds, H saves with end_reason="reset", then resets.
+        recorder.min_reset_seconds = .1
         mapper.calibrate("left", np.eye(4), [0, 0, 0])
         recorder.start(self.data)
         run(recorder, self.model, self.data, self.controller, .2)
@@ -249,6 +260,16 @@ class RecorderTests(unittest.TestCase):
         self.assertIsNone(toggle_recording(recorder, self.data))
         self.assertFalse(empty.exists())
         self.assertEqual(toggle_recording(None, self.data), RECORDING_REQUIRES)
+
+        # E refuses to start while the cup is away from its start pose (press H first).
+        cup_joint = self.model.joint("cup_free").qposadr[0]
+        self.data.qpos[cup_joint:cup_joint + 3] += [0, .15, 0]
+        mujoco.mj_forward(self.model, self.data)
+        self.assertEqual(toggle_recording(recorder, self.data), CUP_NOT_AT_START)
+        self.assertFalse(recorder.recording)
+        reset_scene(self.data, self.controller, mapper, None, recorder)
+        mujoco.mj_forward(self.model, self.data)
+        self.assertTrue(recorder.cup_at_start(self.data))
 
         toggle_recording(recorder, self.data, calibrated=False)
         self.assertIn("before calibration", recorder.status_text(self.data))

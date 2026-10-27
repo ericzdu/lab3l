@@ -200,6 +200,7 @@ def save_screenshot(model, data, destination):
 
 
 RECORDING_REQUIRES = "Recording requires --wrist human --workspace"
+CUP_NOT_AT_START = "Not recording: cup is not at its start position. Press H, then C, then E."
 
 
 def toggle_recording(recorder, data, calibrated=True):
@@ -210,6 +211,10 @@ def toggle_recording(recorder, data, calibrated=True):
     if recorder.recording:
         recorder.stop(data, "user_stop")
         return None
+    if not recorder.cup_at_start(data):
+        print(CUP_NOT_AT_START, flush=True)
+        recorder.notice = CUP_NOT_AT_START
+        return CUP_NOT_AT_START
     recorder.start(data)
     print(f"Recording episode {recorder.counter:04d}: E stops and saves, X discards.", flush=True)
     if not calibrated:
@@ -218,14 +223,18 @@ def toggle_recording(recorder, data, calibrated=True):
 
 
 def reset_scene(data, controller, mapper, finger_motion=None, recorder=None, assist=None):
-    """H: save any current episode (end_reason "reset"), then reset arms and cup."""
+    """H: save any current episode (end_reason "reset"; discarded if shorter than
+    recorder.min_reset_seconds), then reset arms and cup."""
     if assist:
         for kind, payload in assist.release_all(data):
             if recorder is not None:
                 recorder.event(data, kind, **payload)
     if recorder is not None and recorder.recording:
-        recorder.event(data, "reset")
-        recorder.stop(data, "reset")
+        if recorder.elapsed(data) < recorder.min_reset_seconds:
+            recorder.discard()  # H right after E: an accidental start, not a demonstration
+        else:
+            recorder.event(data, "reset")
+            recorder.stop(data, "reset")
     if finger_motion:
         finger_motion.clear()
     controller.reset(data)

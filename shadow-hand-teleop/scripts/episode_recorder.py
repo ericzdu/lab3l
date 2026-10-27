@@ -225,7 +225,7 @@ class EpisodeRecorder:
     def __init__(self, model, controller, hands, *, record_dir=DEFAULT_RECORD_DIR,
                  task="cup_to_tray", operator="", source="keyboard", wrist_mode="human",
                  workspace=True, scale=0.6, video=True, video_fps=30, video_size=(640, 480),
-                 max_seconds=120.0, auto_label=True, assist=None):
+                 max_seconds=120.0, auto_label=True, assist=None, min_reset_seconds=3.0):
         if source not in SOURCES:
             raise ValueError(f"source must be one of {SOURCES}")
         if not TASK_PATTERN.match(task):
@@ -234,6 +234,9 @@ class EpisodeRecorder:
             raise ValueError("operator tag must be at most 32 characters")
         if not np.isfinite(max_seconds) or max_seconds <= 0:
             raise ValueError("max_seconds must be positive and finite")
+        # H within this many seconds of E discards instead of saving: such
+        # recordings are almost always "started before resetting the cup".
+        self.min_reset_seconds = float(min_reset_seconds)
         if not workspace or wrist_mode != "human":
             raise ValueError("Recording requires --wrist human --workspace")
         self.model, self.controller, self.hands = model, controller, hands
@@ -509,6 +512,14 @@ class EpisodeRecorder:
                     dataset.attrs["groups"] = json.dumps(list(CONTACT_GROUPS))
         os.replace(partial, directory / "episode.h5")
         (directory / "episode.json").write_text(json.dumps(metadata, indent=2) + "\n")
+
+    def cup_at_start(self, data, max_offset=.015, max_tilt_deg=10.):
+        """True if the cup rests at its start pose (as after H), so an episode can begin."""
+        from workspace_scene import CUP_START
+        cup = data.body("cup")
+        z = cup.xmat.reshape(3, 3)[2, 2]
+        tilt = np.degrees(np.arccos(np.clip(z, -1, 1)))
+        return bool(np.linalg.norm(cup.xpos - CUP_START) <= max_offset and tilt <= max_tilt_deg)
 
     def discard(self):
         """Stop and delete the current episode; nothing is kept."""

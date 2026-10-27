@@ -310,5 +310,69 @@ class OldEpisodeTests(unittest.TestCase):
         np.testing.assert_allclose(recorded["cup_start"], workspace_scene.CUP_START)
 
 
+class LabelerV2Tests(unittest.TestCase):
+    """Cases found in Nick's first live dataset (episodes 0004-0023)."""
+
+    def test_drop_in_placement_is_a_release_not_a_stuck_transport(self):
+        # Let go ~5 cm above the tray; the cup lands upright in it (episodes 0009/0010).
+        script = Script().grasp_to_lift()
+        offset = script.wrist - script.cup
+        above, inside = CURRENT.above_tray, CURRENT.in_tray
+        script.segment(1.5, cup=above, wrist=above + offset, touch=True)
+        script.segment(.06, cup=above - [0, 0, .01])                  # let go, falling
+        script.segment(.04, cup=inside)                                # lands
+        script.segment(.1, tray=True)
+        script.segment(1.0, wrist=script.wrist + [0, 0, .12], tray=True)
+        labels = label(script)
+        sequence = phase_sequence(labels)
+        self.assertEqual(sequence[-2:], ["release", "retreat"])
+        self.assertNotIn("recover", sequence)
+        self.assertTrue(labels["outcome"]["success"])
+        self.assertEqual(labels["outcome"]["placement"], "dropped_in")
+        self.assertIn("drop_in", kinds(labels))
+        self.assertNotIn("drop", kinds(labels))
+
+    def test_fumbling_touches_without_thumb_stay_reach(self):
+        # Fingers brush the cup without the thumb (episode 0018) before a real grasp.
+        script = Script()
+        near = CUP_START + [0, .02, .06]
+        script.segment(.5, table=True).segment(.8, wrist=near, table=True)
+        for _ in range(3):
+            script.segment(.3, touch=True, table=True, groups=("ff",))
+            script.segment(.3, table=True)
+        script.segment(.5, touch=True, table=True)
+        script.segment(.5, cup=CUP_START + [0, 0, .08], wrist=near + [0, 0, .08], touch=True)
+        script.transport_and_place()
+        labels = label(script)
+        self.assertEqual(phase_sequence(labels),
+                         ["idle", "reach", "grasp", "lift", "transport", "place", "release", "retreat"])
+        self.assertEqual(labels["outcome"]["regrasp_count"], 0)
+        self.assertEqual(labels["outcome"]["placement"], "placed")
+
+    def test_touch_after_release_is_an_adjustment(self):
+        # Nudging the placed cup without grasping it (episode 0004).
+        script = Script().grasp_to_lift().transport_and_place()
+        script.segment(.3, touch=True, tray=True, groups=("ff",))
+        script.segment(.5, tray=True)
+        labels = label(script)
+        self.assertEqual(phase_sequence(labels)[-1], "retreat")
+        self.assertIn("post_release_touch", kinds(labels))
+        self.assertEqual(labels["outcome"]["regrasp_count"], 0)
+
+    def test_every_new_grasp_counts_as_a_regrasp(self):
+        # Grasp, let go without lifting, grasp again (episode 0012).
+        script = Script()
+        near = CUP_START + [0, .02, .06]
+        script.segment(.5, table=True).segment(.8, wrist=near, table=True)
+        script.segment(.5, touch=True, table=True).segment(.4, table=True)
+        script.segment(.5, touch=True, table=True)
+        script.segment(.5, cup=CUP_START + [0, 0, .08], wrist=near + [0, 0, .08], touch=True)
+        script.transport_and_place()
+        labels = label(script)
+        self.assertEqual(labels["outcome"]["regrasp_count"], 1)
+        self.assertEqual(kinds(labels).count("regrasp"), 1)
+        self.assertTrue(labels["outcome"]["success"])
+
+
 if __name__ == "__main__":
     unittest.main()

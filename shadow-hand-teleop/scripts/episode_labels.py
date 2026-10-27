@@ -19,7 +19,7 @@ import workspace_scene
 from workspace_scene import CUP_HALF_HEIGHT, TRAY_HALF_EXTENTS, TRAY_RIM_THICKNESS
 
 
-LABELER_VERSION = "1"
+LABELER_VERSION = "2"
 PHASES = ("idle", "reach", "grasp", "lift", "transport", "place", "release", "retreat", "recover")
 IDLE, REACH, GRASP, LIFT, TRANSPORT, PLACE, RELEASE, RETREAT, RECOVER = range(len(PHASES))
 SIDES = ("left", "right")
@@ -47,6 +47,7 @@ class LabelConfig:
     tip_over_deg: float = 60.0
     bimanual_min: float = 0.3         # s of simultaneous two-hand opposition
     min_duration: float = 1.0         # s; shorter episodes are too_short
+    drop_in_window: float = 1.0       # s; let go in the air, cup lands in the tray within this
 
 
 # -- loading / writing ----------------------------------------------------------
@@ -243,8 +244,34 @@ def free_fall_drops(sig):
 
 
 # -- phases ---------------------------------------------------------------------------
+def lands_in_tray(sig, active, i):
+    """After the active hand lets go at sample i, does the cup land in the tray untouched?
+
+    Looks ahead up to drop_in_window seconds for the first support contact
+    or re-touch. A drop-in placement is a release, not a drop or a failure.
+    Returns (landing sample, fall in metres) or None.
+    """
+    cfg = sig.cfg
+    stop = np.searchsorted(sig.t, sig.t[i] + cfg.drop_in_window + 1e-9, side="right")
+    for j in range(i, min(stop, sig.n)):
+        if sig.touch_raw[j, active]:
+            return None
+        if sig.supported_raw[j]:
+            if sig.tray_raw[j] and not sig.table_raw[j]:
+                return j, float(max(0., sig.cup[i, 2] - sig.cup[j, 2]))
+            return None
+    return None
+
+
 def segment_phases(sig, active, drops):
-    """Per-sample phase codes and boundary causes from the state machine."""
+    """Per-sample phase codes and boundary causes from the state machine.
+
+    Labeler v2: a grasp needs thumb + finger opposition (or the cup actually
+    lifting); a touch without it is still reaching (fumbling). Letting go
+    above the tray and the cup landing in it is a release ("drop_in"). After
+    a release, touches without opposition are adjustments, not new grasps.
+    Every re-entry into grasp after the first counts as a regrasp.
+    """
     cfg, n, t = sig.cfg, sig.n, sig.t
     a = active
     phase = np.zeros(n, dtype=np.int8)
@@ -259,14 +286,18 @@ def segment_phases(sig, active, drops):
     sig.toward = toward
     reaching = debounce(toward > cfg.reach_speed, t, cfg.debounce)
     touch = sig.touch[:, a]
-    touch_onsets = set(rising(touch).tolist())
+    opposition = sig.opposition[:, a]
+    opposition_onsets = set(rising(opposition).tolist())
     lifted_seen = False
     state, lift_xy, release_index, release_distance = IDLE, None, None, None
-    regrasps = 0
+    drop_ins = []  # (release sample, landing sample, fall)
+    grasp_entries = 0
 
     def go(i, new, cause):
-        nonlocal state
+        nonlocal state, grasp_entries
         if new != state:
+            if new == GRASP:
+                grasp_entries += 1
             transitions.append((i, new, cause))
             state = new
 
@@ -274,18 +305,26 @@ def segment_phases(sig, active, drops):
         distance = np.linalg.norm(sig.cup[i] - sig.wrist[i, a])
         table_again = lifted_seen and sig.table[i] and not sig.table[i - 1]
         lifted_seen |= bool(sig.lifted[i])
-        if i in drop_at and state != RECOVER:
+        landing = (lands_in_tray(sig, a, i)
+                   if state in (LIFT, TRANSPORT) and not touch[i] else None)
+        if landing is not None:
+            drop_ins.append((i, *landing))
+            go(i, RELEASE, "drop_in")
+        elif (i in drop_at and state != RECOVER
+              and not (drop_at[i]["landed"] == "tray" and state in (RELEASE, RETREAT))):
             go(i, RECOVER, "drop")
         elif table_again and state != RECOVER:
             go(i, RECOVER, "table_contact")
         elif state == IDLE:
-            if touch[i]:
-                go(i, GRASP, "touch")
+            if opposition[i] or (touch[i] and sig.lifted[i]):
+                go(i, GRASP, "opposition")
+            elif touch[i]:
+                go(i, REACH, "touch")
             elif reaching[i]:
                 go(i, REACH, "reach_speed")
         elif state == REACH:
-            if touch[i]:
-                go(i, GRASP, "touch")
+            if opposition[i] or (touch[i] and sig.lifted[i]):
+                go(i, GRASP, "opposition")
         elif state == GRASP:
             if sig.lifted[i]:
                 go(i, LIFT, "lifted")
@@ -305,32 +344,30 @@ def segment_phases(sig, active, drops):
                 go(i, RELEASE, "touch")
             elif sig.lifted[i]:
                 go(i, LIFT, "lifted")
-        elif state == RELEASE:
-            if touch[i]:
-                go(i, GRASP, "touch")
-            elif distance - release_distance > cfg.retreat_distance:
+        elif state in (RELEASE, RETREAT):
+            if i in opposition_onsets or (touch[i] and sig.lifted[i]):
+                go(i, GRASP, "opposition")
+            elif state == RELEASE and distance - release_distance > cfg.retreat_distance:
                 go(i, RETREAT, "retreat_distance")
-            elif t[i] - t[release_index] >= cfg.retreat_time:
+            elif state == RELEASE and t[i] - t[release_index] >= cfg.retreat_time:
                 go(i, RETREAT, "retreat_time")
-        elif state == RETREAT:
-            if i in touch_onsets:
-                go(i, GRASP, "touch")
         elif state == RECOVER:
-            if i in touch_onsets:
-                regrasps += 1
-                go(i, GRASP, "touch")
-            elif touch[i] and sig.lifted[i]:
+            if touch[i] and sig.lifted[i]:
                 go(i, LIFT, "lifted")
+            elif i in opposition_onsets:
+                go(i, GRASP, "opposition")
         if transitions and transitions[-1][0] == i:
             if state == LIFT:
                 lift_xy = sig.cup[i, :2].copy()
             elif state == RELEASE:
                 release_index, release_distance = i, distance
         phase[i] = state
-    return phase, transitions, regrasps
+    sig.drop_ins = drop_ins
+    return phase, transitions, max(0, grasp_entries - 1)
 
 
-CONTACT_CAUSES = {"touch": "touch", "tray_contact": "tray", "table_contact": "table"}
+CONTACT_CAUSES = {"touch": "touch", "tray_contact": "tray", "table_contact": "table",
+                  "opposition": "opposition", "drop_in": "touch"}
 
 
 def boundary_quality(sig, active, index, cause):
@@ -339,6 +376,7 @@ def boundary_quality(sig, active, index, cause):
     if cause is None:
         return 0, 1.
     raw = {"touch": sig.touch_raw[:, active], "tray": sig.tray_raw, "table": sig.table_raw,
+           "opposition": sig.opposition_raw[:, active],
            "lifted": sig.lifted_raw, "drop": ~sig.supported_raw & ~sig.touch_raw.any(axis=1),
            "reach_speed": sig.toward > cfg.reach_speed,
            "transport_speed": sig.h_speed > cfg.transport_speed}.get(CONTACT_CAUSES.get(cause, cause))
@@ -388,7 +426,7 @@ def build_segments(sig, phase, transitions, active):
     return segments
 
 
-def label_events(sig, transitions, drops, active):
+def label_events(sig, transitions, drops, active, phase):
     events = []
 
     def add(index, kind, side=None, **extra):
@@ -415,13 +453,20 @@ def label_events(sig, transitions, drops, active):
         add(i, "tip_over")
     for i in rising(sig.hand_hand):
         add(i, "hand_hand_contact")
-    previous = IDLE
-    for i, new, _ in transitions:
+    grasps = 0
+    for i, new, cause in transitions:
         if new == RELEASE:
-            add(i, "release", SIDES[active])
-        elif new == GRASP and previous == RECOVER:
-            add(i, "regrasp", SIDES[active])
-        previous = new
+            add(i, "release", SIDES[active], how="drop_in" if cause == "drop_in" else "placed")
+        elif new == GRASP:
+            grasps += 1
+            if grasps > 1:
+                add(i, "regrasp", SIDES[active])
+    for release, landing, fall in getattr(sig, "drop_ins", []):
+        add(landing, "drop_in", SIDES[active], fall=fall, released_at=float(sig.t[release]))
+    after_release = np.isin(phase, (RELEASE, RETREAT))
+    for i in rising(sig.touch[:, active]):
+        if after_release[i] and not sig.opposition[i, active]:
+            add(i, "post_release_touch", SIDES[active])
     events.sort(key=lambda event: (event["sample"], event["kind"]))
     return events
 
@@ -466,8 +511,11 @@ def cup_to_tray_outcome(sig, active, drops, segments):
         }
         reason = next(name for name in FAILURE_ORDER if failing[name])
     fresh = sig.fresh_fraction(window, active)
-    regrasps = sum(1 for k in range(1, len(segments))
-                   if segments[k]["phase"] == "grasp" and segments[k - 1]["phase"] == "recover")
+    regrasps = max(0, sum(1 for segment in segments if segment["phase"] == "grasp") - 1)
+    releases = [segment for segment in segments if segment["phase"] == "release"]
+    placement = None
+    if releases:
+        placement = "dropped_in" if releases[-1].get("start_cause") == "drop_in" else "placed"
     both = sig.opposition.all(axis=1)
     longest = 0.
     for start in rising(both):
@@ -481,7 +529,7 @@ def cup_to_tray_outcome(sig, active, drops, segments):
         "confidence": float(np.clip(min(margins.values()) * fresh, 0, 1)),
         "settle_fresh_frac": float(fresh), "duration_s": duration,
         "active_side": SIDES[active], "bimanual": longest > cfg.bimanual_min,
-        "regrasp_count": regrasps,
+        "regrasp_count": regrasps, "placement": placement,
     }
 
 
@@ -495,7 +543,7 @@ def label_episode(arrays, metadata, cfg=LabelConfig()):
     drops = free_fall_drops(sig)
     phase, transitions, _ = segment_phases(sig, active, drops)
     segments = build_segments(sig, phase, transitions, active)
-    events = label_events(sig, transitions, drops, active)
+    events = label_events(sig, transitions, drops, active, phase)
     if metadata.get("task") == "cup_to_tray":
         outcome = cup_to_tray_outcome(sig, active, drops, segments)
     else:
