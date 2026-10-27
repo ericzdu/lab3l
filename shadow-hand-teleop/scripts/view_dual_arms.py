@@ -318,6 +318,13 @@ def parse_args():
                              "that (previously calibrated) arm instead of waiting for C (default: off)")
     parser.add_argument("--recenter-window", type=float, default=3.0,
                         help="Seconds a gap may last for --auto-recenter (default 3.0)")
+    headset = parser.add_argument_group("headset view (live only): sim view as a 2D video window in Vision Pro")
+    headset.add_argument("--headset-view", action="store_true", help="Stream the sim view to the headset")
+    headset.add_argument("--headset-size", type=video_size, default=(1280, 720),
+                         help="Streamed WIDTHxHEIGHT (default 1280x720)")
+    headset.add_argument("--headset-fps", type=float, default=30, help="Target stream rate, wall clock (default 30)")
+    headset.add_argument("--headset-camera", choices=("follow", "operator", "overview"), default="follow",
+                         help="follow = whatever the Mac viewer shows (default); operator/overview = fixed views")
     recording = parser.add_argument_group("episode recording (--wrist human --workspace only)")
     recording.add_argument("--record-dir", default=None,
                            help="Episode folder (default: data/episodes in the project)")
@@ -341,6 +348,10 @@ def parse_args():
         parser.error("--seconds must be finite and nonnegative")
     if not np.isfinite(args.recenter_window) or args.recenter_window <= 0:
         parser.error("--recenter-window must be positive and finite")
+    if args.headset_view and not args.address:
+        parser.error("--headset-view needs live tracking (--address)")
+    if not np.isfinite(args.headset_fps) or not 0 < args.headset_fps <= 60:
+        parser.error("--headset-fps must be in (0, 60]")
     if args.auto_recenter and not args.address:
         parser.error("--auto-recenter needs live tracking (--address)")
     if len(args.operator) > 32:
@@ -380,13 +391,22 @@ def main():
             save_screenshot(model, data, args.screenshot)
         return
 
+    headset = None
+    if args.headset_view:
+        from headset_view import HeadsetView
+        headset = HeadsetView(model, size=args.headset_size, fps=args.headset_fps,
+                              camera=args.headset_camera)
+
     bridge = None
     if args.address:
         # The SDK installs signal handlers; import and construct on main thread.
         from avp_stream import VisionProStreamer
         from teleop_shadow_hands import TrackingBridge
 
-        bridge = TrackingBridge(VisionProStreamer, args.address, with_wrist=True)
+        # Outbound video is set up on the bridge thread once the streamer
+        # exists; HeadsetView.attach starts WebRTC on its own thread.
+        bridge = TrackingBridge(VisionProStreamer, args.address, with_wrist=True,
+                                on_streamer=headset.attach if headset else None)
 
     recorder = None
     if args.workspace:
@@ -419,6 +439,10 @@ def main():
         print("After a tracking interruption or pause, press C again." +
               (f" Auto-recenter: gaps under {args.recenter_window:g} s re-anchor by themselves."
                if auto_recenter else ""), flush=True)
+        if headset:
+            print(f"Headset view: streaming the {args.headset_camera} camera at "
+                  f"{args.headset_size[0]}x{args.headset_size[1]}, {args.headset_fps:g} fps "
+                  "(2D video window, not AR). It appears once the headset connects.", flush=True)
         if args.wrist == "human":
             print("Optional 27-point forearm tracking: panel shows ON / press C / unavailable.", flush=True)
             print("Forearm guides elbow posture; shoulder is fixed, not full-body tracking.", flush=True)
@@ -620,6 +644,11 @@ def main():
                 if panel_status != last_panel_status:
                     panel.status(panel_status)
                     last_panel_status = panel_status
+                if headset:
+                    with viewer.lock():
+                        headset.maybe_send(data, viewer.cam, [panel_status])
+                    for message in headset.pop_messages():
+                        print(message, flush=True)
                 last_sim_time = data.time
                 viewer.sync()
                 time.sleep(max(0, 0.01 - (time.monotonic() - frame_start)))
@@ -639,6 +668,8 @@ def main():
                 print(f"Could not save the current episode: {scrub(exc)}", flush=True)
         if recorder:
             recorder.close()
+        if headset:
+            headset.close()
         if panel:
             panel.close()
         if bridge:
