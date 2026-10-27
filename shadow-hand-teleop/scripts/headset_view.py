@@ -22,10 +22,50 @@ import numpy as np
 
 CAMERAS = ("follow", "operator", "overview")
 CONNECT_HINT_SECONDS = 30.   # print one hint if no headset connects by then
+REC_MARK = "\u25cf"           # "●" in recorder status: drawn as a red dot
+
+
+def plain(text):
+    """cv2's Hershey fonts are ASCII-only."""
+    text = text.replace("\u00b7", "|").replace("\u2013", "-").replace("\u2014", "-")
+    return text.encode("ascii", "replace").decode()
+
+
+def draw_overlay(frame, lines):
+    """Small status strip, bottom-left, on a BGR frame (in place)."""
+    import cv2
+    lines = [line for line in lines if line]
+    if not lines:
+        return frame
+    height, width = frame.shape[:2]
+    scale = .5 * height / 720
+    thickness = max(1, int(round(height / 720)))
+    step = int(28 * height / 720)
+    margin = int(12 * height / 720)
+    dot = int(7 * height / 720)
+    texts = []
+    for line in lines:
+        mark = line.startswith(REC_MARK)
+        texts.append((mark, plain(line[1:].strip() if mark else line)))
+    widths = [cv2.getTextSize(text, cv2.FONT_HERSHEY_SIMPLEX, scale, thickness)[0][0]
+              + (3 * dot if mark else 0) for mark, text in texts]
+    top = height - margin - step * len(texts)
+    right = min(width, 2 * margin + max(widths))
+    # Darken the strip so white text stays legible on any background.
+    frame[max(0, top - margin // 2):height, 0:right] //= 3
+    for i, (mark, text) in enumerate(texts):
+        baseline = top + step * (i + 1) - step // 3
+        x = margin
+        if mark:
+            cv2.circle(frame, (x + dot, baseline - dot), dot, (40, 40, 230), -1, cv2.LINE_AA)
+            x += 3 * dot
+        cv2.putText(frame, text, (x, baseline), cv2.FONT_HERSHEY_SIMPLEX, scale,
+                    (255, 255, 255), thickness, cv2.LINE_AA)
+    return frame
 
 
 class HeadsetView:
-    def __init__(self, model, size=(1280, 720), fps=30, camera="follow", budget=.012,
+    def __init__(self, model, size=(960, 540), fps=20, camera="follow", budget=.012,
                  clock=time.monotonic):
         width, height = (int(v) for v in size)
         if width % 2 or height % 2 or width < 16 or height < 16:
@@ -51,7 +91,7 @@ class HeadsetView:
         self.next_time = 0.
         self.attached_at = None
         self.hinted = False
-        self.sent = self.skipped = 0
+        self.sent = self.skipped = self.reused = 0
         self.render_seconds = []
 
     # -- streamer side (bridge thread) --------------------------------------
@@ -121,8 +161,25 @@ class HeadsetView:
         self.renderer.update_scene(data, camera=self.camera)
         return self.renderer.render()
 
-    def maybe_send(self, data, viewer_cam, overlay_lines=()):
-        """Render and send one frame if one is due; never raises."""
+    def fit(self, rgb):
+        """Aspect-preserving resize of another camera's frame, letterboxed."""
+        import cv2
+        width, height = self.size
+        h, w = rgb.shape[:2]
+        scale = min(width / w, height / h)
+        size = (max(1, int(round(w * scale))), max(1, int(round(h * scale))))
+        out = np.zeros((height, width, 3), dtype=np.uint8)
+        x, y = (width - size[0]) // 2, (height - size[1]) // 2
+        out[y:y + size[1], x:x + size[0]] = cv2.resize(rgb, size, interpolation=cv2.INTER_LINEAR)
+        return out
+
+    def maybe_send(self, data, viewer_cam, overlay_lines=(), reuse=None):
+        """Render and send one frame if one is due; never raises.
+
+        reuse: (RGB frame, monotonic time) of the recorder's operator frame.
+        With the 'operator' camera it replaces a render when it is at most one
+        headset frame period old (letterboxed if the sizes differ).
+        """
         if self.streamer is None or self.status.startswith("error"):
             return
         now = self.clock()
@@ -142,9 +199,15 @@ class HeadsetView:
                 return
             self._set("streaming")
             started = time.perf_counter()
-            rgb = self.render(data, viewer_cam)
+            if (self.camera_mode == "operator" and reuse is not None
+                    and now - reuse[1] <= period + 1e-9):
+                rgb = reuse[0] if reuse[0].shape[:2] == self.size[::-1] else self.fit(reuse[0])
+                self.reused += 1
+            else:
+                rgb = self.render(data, viewer_cam)
             # New array every frame: update_frame only stores a reference.
             frame = np.ascontiguousarray(rgb[..., ::-1])
+            draw_overlay(frame, overlay_lines)
             self.streamer.update_frame(frame)
             cost = time.perf_counter() - started
             self.render_seconds.append(cost)
@@ -158,7 +221,7 @@ class HeadsetView:
 
     def stats(self):
         ms = np.asarray(self.render_seconds) * 1000
-        return {"status": self.status, "sent": self.sent, "skipped": self.skipped,
+        return {"status": self.status, "sent": self.sent, "skipped": self.skipped, "reused": self.reused,
                 "render_ms": {"median": float(np.median(ms)), "p95": float(np.percentile(ms, 95)),
                               "max": float(ms.max())} if len(ms) else None}
 

@@ -52,6 +52,9 @@ class EpisodeVideo:
         self.renderer = None
         self.status = "ok"
         self.thread = None
+        # camera -> (RGB frame, time.monotonic() when rendered); read-only for
+        # others (the headset view reuses the operator frame).
+        self.latest = {}
 
     def available(self):
         """Create the shared renderer once; never raise if the platform refuses."""
@@ -72,6 +75,7 @@ class EpisodeVideo:
         self.sample_index = {name: [] for name in CAMERAS}
         self.render_seconds = []
         self.error = None
+        self.latest = {}
         period = 1 / self.fps
         self.next_time = {name: i * period / len(CAMERAS) for i, name in enumerate(CAMERAS)}
         self.thread = threading.Thread(target=self._write, daemon=True)
@@ -94,6 +98,7 @@ class EpisodeVideo:
         self.renderer.update_scene(data, camera=self.cameras[name])
         frame = self.renderer.render().copy()
         self.render_seconds.append(time.perf_counter() - started)
+        self.latest[name] = (frame, time.monotonic())
         try:
             self.queue.put_nowait((name, frame, t, sample_index))
         except Full:

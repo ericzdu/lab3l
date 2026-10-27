@@ -264,6 +264,69 @@ class HeadsetViewTests(unittest.TestCase):
         view.maybe_send(self.data, None)
         self.assertEqual(view.status, "error: ValueError: bad frame")
 
+    def test_overlay_draws_bottom_left_only(self):
+        from headset_view import draw_overlay, plain
+        frame = np.full((720, 1280, 3), 200, np.uint8)
+        draw_overlay(frame, ["L: LIVE \u00b7 FOLLOW   R: WAIT \u00b7 press C", "\u25cf REC 00:12",
+                             "Last: ep 0003 \u00b7 SUCCESS"])
+        changed = np.any(frame != 200, axis=2)
+        rows, cols = np.nonzero(changed)
+        self.assertGreater(rows.min(), 720 * .7)       # bottom strip only
+        self.assertLess(cols.max(), 1280 * .6)         # left side only
+        # Red record dot (BGR) is drawn, and text is plain ASCII for cv2.
+        self.assertTrue(np.any((frame[..., 2] > 200) & (frame[..., 0] < 80)))
+        self.assertEqual(plain("ep 0003 \u00b7 SUCCESS"), "ep 0003 | SUCCESS")
+        untouched = np.full((240, 320, 3), 7, np.uint8)
+        draw_overlay(untouched, ["", None])
+        self.assertTrue((untouched == 7).all())
+
+    def test_reuses_fresh_operator_frame_from_recorder(self):
+        clock = Clock()
+        view, streamer = self.attached(size=(320, 180), camera="operator", fps=30, clock=clock, budget=10.)
+        recorded = np.zeros((120, 160, 3), np.uint8)
+        recorded[..., 0] = 255                                  # pure red, RGB
+        view.maybe_send(self.data, None, reuse=(recorded, clock.t - .01))
+        self.assertEqual((view.reused, view.renderer), (1, None))   # no second render
+        frame = streamer.frames[-1]
+        self.assertEqual(frame.shape, (180, 320, 3))
+        np.testing.assert_array_equal(frame[90, 160], [0, 0, 255])  # red in BGR
+        np.testing.assert_array_equal(frame[90, 5], [0, 0, 0])      # 4:3 letterboxed in 16:9
+        self.assertEqual(recorded[0, 0, 0], 255)                    # recorder frame untouched
+        if not self.can_render:
+            return
+        clock.t += 1 / 30 + 1e-6
+        view.maybe_send(self.data, None, reuse=(recorded, clock.t - .1))   # stale: render
+        self.assertEqual(view.reused, 1)
+        self.assertIsNotNone(view.renderer)
+        # The follow camera never reuses the recorder's operator frame.
+        follow, streamer2 = self.attached(size=(320, 180), fps=30, clock=clock, budget=10.)
+        follow.maybe_send(self.data, self.viewer_cam(), reuse=(recorded, clock.t))
+        self.assertEqual(follow.reused, 0)
+
+    def test_headset_lines(self):
+        from arm_control import WristMapper
+        from view_dual_arms import AutoRecenter, headset_lines
+        mapper = WristMapper()
+        mapper.calibrate("left", np.eye(4), [0, 0, 0])
+        lines = headset_lines({"left": True, "right": False}, mapper, self.controller)
+        self.assertEqual(lines, ["L: LIVE \u00b7 FOLLOW   R: WAIT \u00b7 press C"])
+        auto = AutoRecenter()
+        auto.recentered("left", 10.)
+        self.assertIn("FOLLOW (auto)", headset_lines({"left": True, "right": True}, mapper,
+                                                     self.controller, auto_recenter=auto, now=10.5)[0])
+        self.assertEqual(headset_lines({"left": True, "right": True}, mapper, self.controller,
+                                       paused=True)[0][:6], "PAUSED")
+
+        class Recorder:
+            recording, last_saved = True, (3, {})
+            def elapsed(self, data):
+                return 72.4
+            def outcome_text(self):
+                return "ep 0003 \u00b7 SUCCESS"
+        lines = headset_lines({"left": True, "right": True}, mapper, self.controller,
+                              recorder=Recorder())
+        self.assertEqual(lines[1:], ["\u25cf REC 01:12", "Last: ep 0003 \u00b7 SUCCESS"])
+
     def test_bad_arguments(self):
         for kwargs in ({"size": (321, 240)}, {"fps": 0}, {"fps": 120}, {"camera": "head"}):
             with self.assertRaises(ValueError):
@@ -279,7 +342,7 @@ class HeadsetViewTests(unittest.TestCase):
         with mock.patch.object(sys, "argv", ["view_dual_arms.py", "--address", "x", "--headset-view"]):
             args = parse_args()
         self.assertEqual((args.headset_size, args.headset_fps, args.headset_camera),
-                         ((1280, 720), 30, "follow"))
+                         ((960, 540), 20, "follow"))
 
 
 if __name__ == "__main__":

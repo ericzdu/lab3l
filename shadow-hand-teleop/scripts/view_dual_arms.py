@@ -282,6 +282,33 @@ class AutoRecenter:
         self.lost_at.clear()
 
 
+def headset_lines(fresh, mapper, controller, paused=False, error=None, recorder=None,
+                  data=None, auto_recenter=None, now=None):
+    """Short status for the headset overlay: per-side tracking/follow, REC, last outcome."""
+    if error:
+        first = "Connection error"
+    elif paused:
+        first = "PAUSED (Space resumes, then C)"
+    else:
+        parts = []
+        for side in SIDES:
+            follow = "FOLLOW" if side in mapper.origins else "press C"
+            if (follow == "FOLLOW" and auto_recenter is not None and now is not None
+                    and auto_recenter.showing(side, now)):
+                follow += " (auto)"
+            reach = " REACH" if getattr(controller, "reach_errors", {}).get(side, 0) > .005 else ""
+            parts.append(f"{side[0].upper()}: {'LIVE' if fresh[side] else 'WAIT'} · {follow}{reach}")
+        first = "   ".join(parts)
+    lines = [first]
+    if recorder is not None:
+        if recorder.recording:
+            seconds = recorder.elapsed(data)
+            lines.append(f"\u25cf REC {int(seconds // 60):02d}:{int(seconds % 60):02d}")
+        if recorder.last_saved:
+            lines.append("Last: " + recorder.outcome_text())
+    return lines
+
+
 def video_size(text):
     try:
         width, height = (int(value) for value in text.lower().split("x"))
@@ -320,9 +347,11 @@ def parse_args():
                         help="Seconds a gap may last for --auto-recenter (default 3.0)")
     headset = parser.add_argument_group("headset view (live only): sim view as a 2D video window in Vision Pro")
     headset.add_argument("--headset-view", action="store_true", help="Stream the sim view to the headset")
-    headset.add_argument("--headset-size", type=video_size, default=(1280, 720),
-                         help="Streamed WIDTHxHEIGHT (default 1280x720)")
-    headset.add_argument("--headset-fps", type=float, default=30, help="Target stream rate, wall clock (default 30)")
+    # 960x540 @ 20 fps: 1280x720 @ 30 measured over the 15 ms loop budget
+    # with recording on (README "Headset view").
+    headset.add_argument("--headset-size", type=video_size, default=(960, 540),
+                         help="Streamed WIDTHxHEIGHT (default 960x540)")
+    headset.add_argument("--headset-fps", type=float, default=20, help="Target stream rate, wall clock (default 20)")
     headset.add_argument("--headset-camera", choices=("follow", "operator", "overview"), default="follow",
                          help="follow = whatever the Mac viewer shows (default); operator/overview = fixed views")
     recording = parser.add_argument_group("episode recording (--wrist human --workspace only)")
@@ -645,8 +674,11 @@ def main():
                     panel.status(panel_status)
                     last_panel_status = panel_status
                 if headset:
+                    lines = headset_lines(fresh, mapper, controller, paused, error, recorder,
+                                          data, auto_recenter, frame_start)
                     with viewer.lock():
-                        headset.maybe_send(data, viewer.cam, [panel_status])
+                        headset.maybe_send(data, viewer.cam, lines,
+                            reuse=recorder.latest_frame("operator") if recorder else None)
                     for message in headset.pop_messages():
                         print(message, flush=True)
                 last_sim_time = data.time

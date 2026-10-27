@@ -520,6 +520,26 @@ class EpisodeRecorder:
         if self.video is not None:
             self.video.close()
 
+    def latest_frame(self, camera):
+        """(RGB frame, monotonic render time) of the newest video frame, or None."""
+        if not self.recording or self.video is None or self.video.thread is None:
+            return None
+        return self.video.latest.get(camera)
+
+    def outcome_text(self):
+        """'ep 0007 · SUCCESS' / 'ep 0007 · FAIL (reason)' for the last saved episode, or ''."""
+        if not self.last_saved:
+            return ""
+        counter, metadata = self.last_saved
+        outcome = (metadata.get("labels") or {}).get("outcome") or {}
+        if outcome.get("success") is True:
+            result = "SUCCESS"
+        elif outcome.get("success") is False:
+            result = f"FAIL ({outcome.get('failure_reason')})"
+        else:
+            result = "unlabeled"
+        return f"ep {counter:04d} · {result}"
+
     def status_text(self, data):
         if self.recording:
             seconds = self.elapsed(data)
@@ -528,14 +548,5 @@ class EpisodeRecorder:
         if self.notice:
             return self.notice
         if self.last_saved:
-            counter, metadata = self.last_saved
-            labels = metadata.get("labels") or {}
-            outcome = labels.get("outcome") or {}
-            if outcome.get("success") is True:
-                result = "SUCCESS"
-            elif outcome.get("success") is False:
-                result = f"FAIL ({outcome.get('failure_reason')})"
-            else:
-                result = "unlabeled"
-            return f"Saved ep {counter:04d} · {result}"
+            return "Saved " + self.outcome_text()
         return ""
