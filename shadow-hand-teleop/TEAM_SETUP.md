@@ -86,8 +86,9 @@ On macOS, double-click `run_human_arms.command` in Finder, or run:
 ./run_human_arms.command
 ```
 
-That opens dual simplified human-shaped arms, Shadow Hands, a table, a yellow
-cup and a teal tray. Use the separate **Holos — Hand controls** window for
+That opens dual simplified human-shaped arms, Shadow Hands, a table (top at
+0.60 m), a yellow cup in front of the right hand and a teal tray between the
+hands (scene version 2; see README "Human-shaped arm variant"). Use the separate **Holos — Hand controls** window for
 robot keys/buttons; click the MuJoCo window only for camera/display controls.
 The same letters can trigger native MuJoCo shortcuts in the wrong window.
 
@@ -96,8 +97,11 @@ The same letters can trigger native MuJoCo shortcuts in the wrong window.
 - `I` / `K`, `J` / `L`, `U` / `P`: wrist orientation adjustments.
 - `F`: both hands close gradually over about 0.9 seconds.
 - `O`: both hands open gradually over about 1.3 seconds.
-- `H`: reset arms **and cup**; this discards the current scene pose.
+- `H`: reset arms **and cup**; this discards the current scene pose (and
+  saves an episode in progress).
 - `Space`: pause/resume; `B`: operator/overview camera.
+- `E`: start / stop+save an episode; `X`: discard it. See README
+  "Recording episodes"; recordings go to the ignored `data/episodes/`.
 
 On Linux (not validated here), the equivalent viewer command is:
 
@@ -132,7 +136,12 @@ The Linux equivalent (not validated here) is:
 .venv/bin/python scripts/view_dual_arms.py --wrist human --workspace --address CURRENT_IP_OR_ROOM_CODE
 ```
 
-After tracking loss, pause/resume or H reset, press C again. C recenters input;
+After tracking loss, pause/resume or H reset, press C again. On unreliable
+Wi-Fi, `./run_live_human_arms.command --auto-recenter` re-anchors an arm by
+itself after a tracking gap under 3 s (default off). Add `--headset-view` to see
+the simulation as a 2D video window in the headset, with a small status
+overlay (not AR; latency depends on Wi-Fi). See README "Tips for live
+recording". C recenters input;
 it does not move the physical simulation base. `ICE closed` plus `WAIT / HOLD`
 means no fresh hand data is reaching this controller; inspect the terminal
 before trying to calibrate repeatedly. Do not share personal recordings or
@@ -142,11 +151,17 @@ connection codes in commits.
 
 - **Fixed shoulder bases and fixed 28 cm / 26 cm arm links.** Some targets are
   unreachable or clipped by the workspace/posture envelope. `REACH LIMIT`
-  reports requested-target clipping, not collision. A movable shoulder/torso
+  reports requested-target clipping, not collision. The table, cup and tray
+  were moved so a right-hand cup-to-tray fits inside those limits;
+  `scripts/check_reach.py` measures this, and `scripts/scripted_cup_to_tray.py`
+  is a scripted pick and place that labels as success. A movable shoulder/torso
   base has been discussed but **is not implemented in this branch**.
-- **Approximate live finger retargeting.** Finger spread and full thumb opposition
-  are missing. Offline keyboard grasping has been observed, but live capture
-  is not a validated reliable grasp controller. BunnyVisionPro/dex-retargeting
+- **Approximate live finger retargeting.** Finger spread and thumb rotation
+  (THJ5) are missing; thumb opposition (THJ4) is estimated from tracking.
+  `scripts/live_grasp_check.py` shows a retargeted grasp holding the cup
+  offline, but live capture is not a validated reliable grasp controller.
+  `--grasp-assist` (off by default, flagged in episodes) welds a closed hand
+  to the cup. BunnyVisionPro/dex-retargeting
   has **not** been integrated; evaluating it is a useful separate task.
 - **Release still needs testing.** O now opens gradually, but hand/cup/handle
   contacts can still push or flick the cup. Slow opening is not a guarantee
@@ -154,10 +169,13 @@ connection codes in commits.
 - **Idealized arms.** Shoulders are fixed; elbow posture is inferred/guided,
   wrist freedom is virtual, and gravity compensation is idealized. This is
   not a hardware-faithful robot or an anatomical digital twin.
-- **No live arm-demo recorder or trained policy.** The live arm launcher controls
-  the scene but does not save demonstrations. Existing mock export / HDF5
-  replay tools are retained; they must not be described as recorded live-arm
-  demonstrations. See README for their supported schemas/models.
+- **Episode recorder, but no trained policy.** The human-arm workspace
+  launchers record episodes (E): simulated robot state, raw Vision Pro input,
+  cup/contact signals and camera video. They are simulation driven by human
+  tracking, not real-robot data. Keyboard and live episodes share a schema
+  but are not equivalent demonstrations. Success/phase labels are heuristics
+  that have not been tuned against hand-labelled episodes yet. The older mock
+  export / HDF5 replay tools are unchanged.
 - **Platform/UI validation.** Offline checks do not validate another person's
   headset, network, graphics driver or Tk installation. Start with keyboard
   mode before debugging streaming.
@@ -173,10 +191,15 @@ reproducibility. Post which area you are taking so others can avoid duplication.
 | Human arm geometry / IK / reach limits | `scripts/human_arms.py` |
 | Input calibration / coordinate mapping | `scripts/arm_control.py`, `scripts/forearm_tracking.py` |
 | Live packet bridge / approximate fingers | `scripts/teleop_shadow_hands.py`, `scripts/hand_retargeting.py` |
-| Cup / tray / tabletop props | `scripts/workspace_scene.py` |
+| Live-style grasp check / grasp assist | `scripts/live_grasp_check.py`, `scripts/grasp_assist.py` |
+| Headset video window / overlay | `scripts/headset_view.py`, `scripts/bench_headset_view.py` |
+| Cup / tray / tabletop props | `scripts/workspace_scene.py` (bump `SCENE_VERSION` when they move) |
+| Reach probe / scripted cup-to-tray | `scripts/check_reach.py`, `scripts/scripted_cup_to_tray.py` |
 | Viewer loop / gradual opening | `scripts/view_dual_arms.py` |
 | Separate controls window | `scripts/control_panel.py` |
 | Existing export / playback | `scripts/collect_mock_demo.py`, `scripts/replay_data.py`, `scripts/replay_demo.py` |
+| Episode recording / video | `scripts/episode_recorder.py`, `scripts/episode_video.py` |
+| Success / phase labels | `scripts/episode_labels.py`, `scripts/label_episode.py`, `scripts/summarize_episodes.py` |
 
 Most model code uses metres, radians and kilograms. Keep body names and actuator
 names unique when adding models. Preserve teammates' replay modules and the
@@ -196,5 +219,7 @@ git push -u origin YourName
 Then open a PR, state what changed, list checks performed, and document remaining
 issues. Keep `.venv`, `.cache`, downloaded models, recordings, personal file paths
 and credentials out of Git. License notices and attribution are required when
-reusing third-party code; neither BunnyVisionPro nor a full live recorder is
-present merely because it is listed as a possible future task.
+reusing third-party code; BunnyVisionPro is not present merely because it
+is listed as a possible future task. Recorded
+episodes under `data/` are git-ignored; share them outside Git, and only
+with the operator's agreement.

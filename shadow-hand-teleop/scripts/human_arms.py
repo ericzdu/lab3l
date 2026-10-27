@@ -14,11 +14,12 @@ def motor(spec, name, joint, axis, limit):
 
 
 def build_human_model(workspace=False):
+    from workspace_scene import TABLE_TOP
     scene = mujoco.MjSpec.from_string(BASE_SCENE)
     scene.modelname = "human_shaped_dual_arms"
     scene.option.integrator = mujoco.mjtIntegrator.mjINT_IMPLICITFAST
     scene.worldbody.add_geom(name="worktop", type=mujoco.mjtGeom.mjGEOM_BOX,
-        pos=[.62, 0, .48], size=[.46, .58, .025], rgba=[.55, .39, .26, 1])
+        pos=[.62, 0, TABLE_TOP - .025], size=[.46, .58, .025], rgba=[.55, .39, .26, 1])
     path = menagerie.get("shadow_hand").path()
     for side, y in (("left", .25), ("right", -.25)):
         upper = scene.worldbody.add_body(name=f"{side}_shoulder", pos=[-.12, y, 1.02])

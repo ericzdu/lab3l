@@ -289,6 +289,7 @@ class WristMapper:
 
     A stale stream invalidates the calibration for that hand. Fresh tracking
     alone cannot move the arm again; the operator must press C to recenter.
+    (The viewer's optional --auto-recenter calls recenter() after short gaps.)
     """
 
     def __init__(self, scale=0.6):
@@ -301,6 +302,8 @@ class WristMapper:
         self.rotation_anchors = {}
         self.forearm_alignments = {}
         self.position_scales = {}
+        # Gains a side had when it was last invalidated, for recenter().
+        self.previous_scales = {}
 
     def calibrate(self, side, wrist, robot_position, robot_rotation=None,
                   forearm=None, robot_forearm=None):
@@ -349,7 +352,26 @@ class WristMapper:
             self.position_scales[side][1]=gain
         return True
 
+    def recenter(self, side, wrist, robot_position, robot_rotation=None,
+                 forearm=None, robot_forearm=None):
+        """Re-anchor a side lost after calibration, keeping its previous gains.
+
+        Same as calibrate() at the robot's current pose, except that the
+        per-axis position scales (including the hand-span lateral gain) are
+        restored instead of reset to `scale`. Returns False, changing
+        nothing, if the side was not calibrated when it was last invalidated.
+        """
+        scales = self.previous_scales.get(side)
+        if scales is None:
+            return False
+        self.calibrate(side, wrist, robot_position, robot_rotation,
+                       forearm=forearm, robot_forearm=robot_forearm)
+        self.position_scales[side] = scales.copy()
+        return True
+
     def invalidate(self, side):
+        if side in self.position_scales:
+            self.previous_scales[side] = self.position_scales[side].copy()
         self.origins.pop(side, None)
         self.anchors.pop(side, None)
         self.rotation_origins.pop(side, None)

@@ -53,8 +53,11 @@ camera input or microphone input are enabled. Remote mode uses third-party
 signaling and, when needed, an encrypted TURN relay.
 
 This first retargeter maps individual finger bend angles, clips joint targets,
-and rate-limits commands. It does NOT reproduce the complete human hand pose:
-spread, thumb opposition, wrist motion, and arm reaching are not implemented.
+and rate-limits commands. Thumb opposition (THJ4) follows how far your thumb
+metacarpal leaves the palm plane (about 10° → 0, 45° → full), and rises toward
+the keyboard fist's value as your fingers close. It does NOT reproduce the
+complete human hand pose: spread, thumb rotation (THJ5), wrist motion, and arm
+reaching are not implemented.
 No fresh packets for 0.5 seconds freezes the full simulation if both hands are
 stale; a single stale hand holds its last actuator target. The SDK does not expose
 per-hand tracking validity in this interface, so a frozen but repeatedly sent
@@ -178,8 +181,9 @@ requires another C. If both hands are stale, the entire simulation freezes;
 if one is stale, that side keeps its last joint command while the other runs.
 The SDK's previously noted repeated-frozen-skeleton limitation still applies.
 
-This version shows the simulation on the Mac and does not record episodes,
-train a policy, or stream the rendered scene into the headset. An offline test
+This version shows the simulation on the Mac and does not record episodes
+(recording is only available in the human-arm workspace; see "Recording
+episodes"), train a policy, or stream the rendered scene into the headset. An offline test
 does not verify a live headset connection or real-world grasping performance.
 
 Offline checks (no headset or graphical viewer required):
@@ -260,6 +264,33 @@ validated with live headset input; F is a generic fist, not an automatic
 grasp command. No liquid, breakage or real-material fidelity is modeled.
 Scene dimensions and initial positions live in `scripts/workspace_scene.py`.
 
+**Scene layout (version 2).** The worktop top is at z = 0.60 m (was 0.505),
+the cup starts at (0.30, −0.27) and the tray is centred at (0.30, −0.09)
+(was (0.32, −0.28) and (0.43, −0.12)); x is forward, y is the robot's left.
+At the old height the right palm could only rest on the cup's rim, because
+the wrist clip box and 0.53 m reach cap stop it about 6 cm too high. The arms,
+clip box and reach cap are unchanged; only the props moved. Episodes store
+`metadata.scene.scene_version` (missing = version 1) and the prop positions,
+so older episodes still label correctly; replay warns that their props are
+drawn at the new positions.
+
+`scripts/check_reach.py` is a headless probe of that workspace. It sweeps
+each wrist over its clip box (2 cm grid, palm-down / palm-inward / palm-inward
+pitched 30°), settles physics, and reports the best palm-inward wrap of the
+cup and whether a cup held that way can be put in the tray with 3 cm to
+spare from every limit (about 3 minutes on 11 cores; `--side right`,
+`--json out.json`). Re-run it after moving props. With the Shadow hand turned
+palm-inward the open thumb rests on the cup's rim, so the report also counts
+those "rim" wraps. Version 2 result: right-hand wrap with 5.6 cm limit
+clearance, placement at the tray centre with 5.7 cm.
+
+`scripts/scripted_cup_to_tray.py` is a deterministic right-hand pick and
+place built only from controller targets and the gradual open/close. It
+records a `scripted_demo` episode that labels SUCCESS (reach > grasp > lift >
+transport > place > release > retreat). It shows the scene is solvable within
+the live limits; it is not a policy. Add `--viewer` (with `mjpython`) to
+watch it.
+
 `run_human_arms.command` opens an offline shoulder–elbow–wrist prototype.
 `run_live_human_arms.command` connects the same model to Tracking Streamer:
 press Start on Vision Pro, enter its current IP or room code on the Mac,
@@ -313,8 +344,7 @@ hold wrists comfortably 20–70 cm apart, and calibrate both together. Implausib
 spacing/gain falls back to the ordinary scale; this is not body-heading
 calibration. The wrist housing radius is 18 mm and the forearm sleeve stops
 3 cm short of the pivot so a bulky casing does not prevent palm contact.
-All collision geometry remains enabled. Thumb opposition/grasping is
-unchanged and has NOT been validated by these changes.
+All collision geometry remains enabled.
 
 Offline tests exercise packet decoding, 25-point fallback, calibration,
 elbow swivel with the wrist held in place, and physical 180-degree palm
@@ -344,12 +374,198 @@ The immediate `set_fist` helper remains available to offline tests only.
 Human-arm status shows `REACH LIMIT` if the requested wrist position is
 clipped by more than 5 mm by workspace, arm-length or elbow-envelope limits.
 This is not a collision warning. Calibration C recenters the input; it
-cannot move a fixed shoulder or extend the 28 cm + 26 cm arm. Cup and tray
-locations are unchanged. H resets both arms and the cup if the cup has been
-thrown outside reach. No movable base or torso is implemented here.
+cannot move a fixed shoulder or extend the 28 cm + 26 cm arm. The table, cup
+and tray were moved into reach (scene version 2, above). H resets both arms
+and the cup if the cup has been thrown outside reach. No movable base or torso is implemented here.
 `scripts/test_hand_transition.py` checks ramp timing, interruptions, repeated
 keys, reset and reach warnings; a live/user grasp-and-release test is still
 needed to confirm the cup no longer gets pushed during opening.
+
+## Recording episodes
+
+The human-arm workspace scene (`--wrist human --workspace`, i.e. both
+`run_human_arms.command` and `run_live_human_arms.command`) can record
+episodes. An episode is **simulated robot state driven by human tracking**
+(or keyboard/scripted targets), not real-robot data. Live episodes also keep
+the raw Vision Pro input, so they can be re-run through a future retargeter.
+Keyboard and live episodes share one schema but are not equivalent
+demonstrations.
+
+| Key / button (controls window) | Action |
+|---|---|
+| **E** · Record | Start an episode; press again to stop and save it. Refuses to start (with a message) unless the cup is at its start pose: press H first |
+| **X** · Discard | Stop and delete the current episode |
+| **H** | Save the current episode (`end_reason="reset"`), then reset arms and cup. Within 3 s of E it discards instead (an accidental start) |
+| Space | Pause/resume; no samples are recorded while paused |
+| Esc / close a window | Save the current episode (`end_reason="viewer_closed"`) |
+
+The status line shows `● REC 00:12.4 · ep 0007` while recording, then
+`Saved ep 0007 · SUCCESS` or `Saved ep 0007 · FAIL (not_released)`; the
+terminal prints the saved folder. Episodes auto-stop at
+`--max-episode-seconds`. In live mode press C before E; starting earlier is
+allowed but warns `REC started before calibration (press C)`.
+Routine for each attempt: **H** (reset) → **C** (calibrate) → **E** (record).
+
+Flags (the launchers forward extra arguments):
+
+| Flag | Default | Meaning |
+|---|---|---|
+| `--record-dir` | `data/episodes` | Where episodes are written (git-ignored) |
+| `--task` | `cup_to_tray` | Task id; the labeler evaluates `cup_to_tray` only |
+| `--operator` | empty | Optional tag such as initials (≤ 32 characters) |
+| `--video` / `--no-video` | on | Render operator + overview camera MP4s |
+| `--video-fps` | 30 | Frame rate in simulation time |
+| `--video-size` | `640x480` | Per-camera size (even numbers) |
+| `--max-episode-seconds` | 120 | Auto-stop and save |
+| `--no-auto-label` | off | Skip labeling after saving |
+
+For example: `./run_live_human_arms.command --operator NT --video-fps 15`.
+
+**Tips for live recording**
+
+- Press **H** then **C** before each episode, so the arms and cup start at home
+  and the mapping is fresh.
+- Keep your hands within about 25 cm of where they were when you pressed C.
+  At the default `--scale 0.6` that already covers the arm's clip box.
+- Watch the status for `REACH LIMIT`. It means the requested wrist position
+  is clipped, so move back toward the calibration pose.
+- If a side shows `arm press C`, its tracking dropped for more than 0.5 s and
+  that arm is frozen until you press **C**.
+- On flaky Wi-Fi add `--auto-recenter`, for example
+  `./run_live_human_arms.command --auto-recenter`. An arm that was following
+  and whose tracking returns within `--recenter-window` seconds (default 3)
+  re-anchors at its current pose with its previous gains, shows
+  `arm FOLLOW (auto)` for a second, and logs an `auto_recenter` event.
+  Longer gaps still need C. The default (freeze until C) is unchanged.
+- To see the simulation in the headset instead of on the Mac, add
+  `--headset-view`, for example
+  `./run_live_human_arms.command --auto-recenter --headset-view`.
+
+- `--grasp-assist` (off by default; live and keyboard modes) helps a
+  marginal grasp hold: see "Grasp assist" below.
+
+**Grasp assist.** When the thumb and at least one other finger touch the cup
+and your commanded grip is closed past about 50 % and has stopped closing,
+a weld constraint holds the cup to that palm at its current pose (the cup is
+never moved). It lets go when the grip opens below about 35 %, when the hand
+has not touched the cup for 0.3 s, or on H/reset. The terminal prints
+`Grasp assist ON/OFF`. Episodes recorded with it are flagged, not hidden:
+`assist/active` per sample, `grasp_assist` in metadata, `assist_on`/
+`assist_off` events and an `assist` column in `summarize_episodes.py`. The
+labeler ignores the flag, so assisted grasps are labelled like any other;
+filter on the flag when picking demonstrations for training. The welds exist
+(inactive) in every workspace model, so older episodes still replay.
+
+Grip physics: every cup contact uses condim 4 (torsional friction 0.005), so a
+pinched cup does not spin about the contact; sliding friction, size and mass
+are unchanged, and the cup still slides when pushed and tips when knocked.
+`.venv/bin/python scripts/live_grasp_check.py [--grasp-assist]` closes the
+right hand at the scripted wrap pose only through the live finger mapping,
+lifts 5 cm, holds 2 s and prints lift, slip and tilt (no headset needed).
+
+**Headset view.** `--headset-view` streams the MuJoCo scene to the Vision
+Pro as a floating **2D video window** through Tracking Streamer's WebRTC
+video (the same IP or room code). It is not AR: nothing is placed in your
+room, and latency depends on your Wi-Fi. The window appears once the headset
+connects. Hand tracking and recording keep working if it never does, or if
+the stream fails (the terminal prints one line).
+
+- **What it shows:** by default (`--headset-camera follow`) whatever the Mac
+  viewer camera shows. To adjust the view, move the Mac camera with the mouse
+  or press B for operator/overview. `operator` and `overview` lock the stream
+  to the fixed workspace views instead.
+- **Overlay:** a small strip at the bottom left shows each hand's
+  `LIVE`/`WAIT` and `FOLLOW`/`press C` (plus `REACH` and `(auto)`), a red
+  `REC mm:ss` while recording, and the last saved episode's outcome, so you
+  can tell when to calibrate (C) and whether recording (E) is on without
+  looking at the Mac. The C/E buttons are still in the Mac's Hand controls
+  window: someone at the Mac presses them.
+- **Cost:** defaults are `--headset-size 960x540 --headset-fps 20`.
+  Each streamed frame is an extra offscreen render on the control thread.
+  A frame that costs more than `--headset-budget-ms` (default 16) skips the
+  next slot. Measured on the development Mac with nothing else running, while
+  recording 30 fps video (loop period median / p95):
+
+  | Headset view | Loop (ms) | Stream | Render | Recorder frames dropped |
+  |---|---|---|---|---|
+  | off | 12.0 / 13.8 | – | – | 2 |
+  | `follow` 960x540 @ 20 (default) | 13.2 / 28.4 | 17.7 fps | 13.8 ms | 12 |
+  | `operator` 960x540 @ 20 | 12.9 / 15.2 | 17.6 fps | 2.0 ms (reused) | 2 |
+  | `follow` 1280x720 @ 30 | 13.6 / 30.6 | 18.4 fps | 14.8 ms | 60 |
+
+  With `--headset-camera operator` and recording on, the recorder's operator
+  frame is reused (letterboxed, 640x480) instead of rendering twice, so it
+  is the cheapest choice. 1280x720 @ 30 goes over budget on almost half its
+  frames and drops five times as many recorder frames, so it is not the
+  default. With another simulation running, renders took about 17.6 ms and
+  the default stream fell to about 9 fps.
+  `.venv/bin/mjpython scripts/bench_headset_view.py` measures this on your Mac;
+  close other simulations first.
+
+Each episode is a folder `data/episodes/<YYYYMMDD-HHMMSS>_<task>_<NNNN>/` with
+`episode.h5`, `episode.json` (the same metadata as the HDF5 `metadata`
+attribute) and, with video, `cam_operator.mp4` and `cam_overview.mp4`.
+`episode.h5` (`schema="lab3l.episode"`, `schema_version=2`) is sample-major,
+with one sample per loop iteration in which physics advanced (~100 Hz):
+
+| Group | Contents |
+|---|---|
+| `time/` | `sim` (from 0, strictly increasing) and `wall` seconds |
+| `robot/` | `qpos`, `qvel`, `ctrl`, actual and target wrist pose, `reach_error` |
+| `input/` | raw wrist transform, 25-joint finger skeleton, 27-point arm skeleton, forearm vector, retargeted finger targets, `fresh`, packet age/sequence. NaN/False/-1 in keyboard mode |
+| `scene/` | cup pose (xyz + wxyz) and linear/angular velocity |
+| `contacts/` | hand–cup per finger group (thumb, ff, mf, rf, lf, palm, other), arm–cup, hand–cup normal force, cup–table, cup–tray, hand–hand, `ncon` |
+| `assist/` | `active` (N, 2) left/right: the `--grasp-assist` weld holds the cup. All False without the flag; absent in older episodes |
+| `video/<camera>/` | `frame_time` and `sample_index` of every written frame |
+| `labels/` | per-sample `phase`, plus segments/events/outcome attributes |
+
+Root attribute `events` is a JSON list of record start/stop, pause/resume,
+reset, calibrate (with the wrist-mapper calibration), auto_recenter (side,
+gap), tracking lost/regained, reach-limit on/off, assist_on/assist_off (side,
+and closure or reason) and errors. Metadata records `grasp_assist` (flag on or
+off) and `grasp_assist_activations`, and the model's joint/actuator
+names, camera intrinsics, software versions and git commit. It never stores
+the Tracking Streamer address or absolute paths. Do not commit recordings.
+
+**Video caveats.** Frames are rendered offscreen on the control thread, with
+one camera per loop iteration, and encoded on a background thread. If the
+encoder falls behind, frames are dropped and counted in
+`metadata.video.dropped_frames`; `frame_time` keeps exact alignment. Measured on
+an M-series Mac with the viewer open (scripted demo, 640x480, 30 fps): about
+11 ms per render whatever the resolution, and 12 ms median / 14 ms max loop
+work, against 2 ms without video. If control feels sluggish, use
+`--video-fps 15` or `--no-video`. If the renderer cannot be created, recording
+continues state-only and `metadata.video.status` says why.
+
+**Labels.** After each save, `scripts/episode_labels.py` runs automatically. It
+splits the episode into phases (idle, reach, grasp, lift, transport, place,
+release, retreat, recover) and decides cup-to-tray success with a failure
+reason (`never_touched`, `never_lifted`, `dropped_outside_tray`, `tipped_over`,
+`not_in_tray`, `not_released`, `not_settled`, `too_short`). It uses only the
+recorded contacts and cup motion. Thresholds are hand-chosen heuristics in
+`LabelConfig`, not yet tuned against human-labelled episodes. Confidence
+scores are heuristic too. The three confidence factors are stored per
+segment so the labeler can be recalibrated later.
+
+Labeler v2 rules (from the first live dataset): a **grasp** needs thumb plus
+another finger on the cup, or the cup actually lifting; touches without that
+count as reaching. Letting go above the tray and the cup landing in it within
+1 s is a **release** (`drop_in` event, `outcome.placement = "dropped_in"`;
+otherwise `"placed"`). Touches after a release without a grasp are
+`post_release_touch` events, not new grasps. Every grasp after the first
+counts as a regrasp. Re-run `label_episode.py` to relabel older episodes.
+
+```bash
+.venv/bin/python scripts/label_episode.py data/episodes            # (re)label all; --dry-run to preview
+.venv/bin/python scripts/summarize_episodes.py --csv episodes.csv  # outcome/phase/assist table
+.venv/bin/mjpython scripts/replay_demo.py data/episodes/<id>/episode.h5
+```
+
+Replay rebuilds the workspace scene, checks that joint/actuator names match,
+restores arms, hands and cup, and prints phase transitions and the outcome.
+Tests: `scripts/test_episode_recorder.py`, `scripts/test_episode_labels.py`,
+`scripts/test_scripted_cup_to_tray.py`, `scripts/test_auto_recenter.py`,
+`scripts/test_check_reach.py`, `scripts/test_headset_view.py`, `scripts/test_live_grasp.py`.
 
 
 ## HDF5 recording and replay
@@ -376,7 +592,8 @@ viewer to stop. For validation without a window:
 
 The player also accepts `.hdf5` and existing `.npz` demonstrations. Playback
 restores recorded states with their original sample timing; it does not rerun
-physics from actions. Files must match the default single left Shadow Hand model.
+physics from actions. Files must match the default single left Shadow Hand model,
+except recorded `lab3l.episode` files (see "Recording episodes").
 
 HDF5 files use root datasets `timestamp` (N,), `qpos` (N, nq), `qvel` (N, nv),
 and `action` (N, nu). Times are seconds, finite, nonnegative, and strictly
