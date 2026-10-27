@@ -18,6 +18,12 @@ CUP_RADIUS = .034
 CUP_HALF_HEIGHT = .057
 CUP_START = np.array([.30, -.27, TABLE_TOP + CUP_HALF_HEIGHT])
 TRAY_CENTER = np.array([.30, -.09])
+# Cup contacts: MuJoCo uses the larger condim and the larger friction of the
+# two geoms, so these apply to every cup contact (fingers, palm, table, tray).
+# condim 4 adds torsional friction, so a cup pinched between thumb and fingers
+# does not spin about the contact normal; sliding friction stays 1.
+CUP_CONDIM = 4
+CUP_FRICTION = [1, .005, .001]
 # Worktop is 5 cm thick (human_arms.py); legs run from the floor (z = -0.1,
 # BASE_SCENE) to the worktop centre, as before.
 FLOOR_Z = -.1
@@ -47,7 +53,7 @@ def add_workspace(scene):
     # A real opening: separate convex wall segments, not one solid cylinder.
     cup.add_geom(name="cup_bottom",type=mujoco.mjtGeom.mjGEOM_CYLINDER,
         pos=[0,0,-(CUP_HALF_HEIGHT-.006)],size=[CUP_RADIUS,.006,0],mass=.06,
-        rgba=[.9,.65,.22,1],friction=[1,.01,.001])
+        rgba=[.9,.65,.22,1],friction=CUP_FRICTION,condim=CUP_CONDIM)
     segments=24
     for i in range(segments):
         angle=2*np.pi*i/segments
@@ -55,11 +61,11 @@ def add_workspace(scene):
             pos=[.032*np.cos(angle),.032*np.sin(angle),0],
             quat=[np.cos(angle/2),0,0,np.sin(angle/2)],
             size=[.003,.032*np.tan(np.pi/segments)*1.05,.051],
-            mass=.12/segments,rgba=[.95,.72,.28,1],friction=[1,.01,.001])
+            mass=.12/segments,rgba=[.95,.72,.28,1],friction=CUP_FRICTION,condim=CUP_CONDIM)
     # U-shaped handle, formed from three collision capsules.
     for i,(start,end) in enumerate((([.032,0,.032],[.061,0,.032]),
                                   ([.061,0,.032],[.061,0,-.027]),
                                   ([.061,0,-.027],[.032,0,-.027]))):
         cup.add_geom(name=f"cup_handle_{i}",type=mujoco.mjtGeom.mjGEOM_CAPSULE,
             fromto=[*start,*end],size=[.005,0,0],mass=.01,
-            rgba=[.95,.72,.28,1],friction=[1,.01,.001])
+            rgba=[.95,.72,.28,1],friction=CUP_FRICTION,condim=CUP_CONDIM)

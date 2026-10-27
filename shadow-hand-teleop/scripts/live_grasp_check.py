@@ -58,8 +58,11 @@ def in_wrist(data, controller):
     return rotation.T @ (data.body("cup").xpos - data.site_xpos[site])
 
 
-def measure(grasp_assist=False):
-    """Run once; return dict(lifted, slip, tilt) in metres/degrees, plus assist use."""
+def measure(grasp_assist=False, offset=(0., 0., 0.)):
+    """Run once; return dict(lifted, slip, tilt) in metres/degrees, plus assist use.
+
+    offset (m) shifts the wrap pose, as an imprecise live approach would.
+    """
     from view_dual_arms import setup
     model, data, controller, hands = setup("human", workspace=True)
     assist = None
@@ -68,6 +71,8 @@ def measure(grasp_assist=False):
         assist = GraspAssist(model, hands)
     script = LiveHandScript(model, data, controller, hands, assist=assist)
     points = waypoints(controller)
+    for name in ("pre_grasp_high", "pre_grasp", "grasp"):
+        points[name] = points[name] + offset
     script.hold(.5)
     rest = data.body("cup").xpos.copy()
     script.move(points["clear"])

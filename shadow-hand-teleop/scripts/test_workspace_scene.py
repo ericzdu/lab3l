@@ -26,6 +26,34 @@ class WorkspaceTests(unittest.TestCase):
         self.c.reset(self.d)
         np.testing.assert_allclose(self.d.qpos[self.q:self.q+3],CUP_START)
 
+    def push(self,force,height,seconds=.3):
+        """Horizontal +x force at `height` above the cup centre, then let it settle."""
+        cup=self.m.body("cup").id
+        for _ in range(int(seconds/.01)):
+            self.d.qfrc_applied[:]=0
+            point=self.d.xpos[cup]+[0,0,height]
+            mujoco.mj_applyFT(self.m,self.d,[force,0,0],[0,0,0],point,cup,self.d.qfrc_applied)
+            self.step(1)
+        self.d.qfrc_applied[:]=0
+        self.step(150)
+
+    def tilt(self):
+        return np.degrees(np.arccos(np.clip(self.d.body("cup").xmat[8],-1,1)))
+
+    def test_cup_slides_when_pushed_and_tips_when_knocked(self):
+        # Contact condim 4 (torsional friction) must not glue the cup down.
+        self.assertEqual(self.m.geom("cup_wall_0").condim[0],4)
+        self.step(100)
+        start=self.d.body("cup").xpos.copy()
+        self.push(2.5,-.045)                       # low push, above the ~2.1 N friction limit
+        self.assertGreater(self.d.body("cup").xpos[0]-start[0],.01)
+        self.assertLess(self.tilt(),10)
+        self.c.reset(self.d)
+        self.step(100)
+        self.push(2.,.057,.1)                      # short knock at the rim
+        self.assertGreater(self.tilt(),60)
+        self.assertGreater(self.d.body("cup").xpos[2],TABLE_TOP)   # fell over on the table
+
     def test_gravity_and_tray_support(self):
         self.d.qpos[self.q:self.q+3]=[*TRAY_CENTER,TABLE_TOP+.20]
         mujoco.mj_forward(self.m,self.d)
