@@ -27,8 +27,14 @@ class TrackingBridge:
     None, [4] raw (25,4,4) finger skeleton copy, [5] raw 27-point arm skeleton
     copy or None, [6] bridge-wide packet sequence number. Indices 0-3 are
     relied on elsewhere and never change.
+
+    on_streamer, if given, is called once with the streamer right after it
+    is constructed, on this bridge's background thread (e.g. to set up
+    outbound video). Its exceptions are stored in hook_error and printed;
+    they never stop hand tracking. It must return promptly: tracking is not
+    polled until it does.
     """
-    def __init__(self, factory, address, with_wrist=False):
+    def __init__(self, factory, address, with_wrist=False, on_streamer=None):
         self.lock = threading.Lock()
         self.stop = threading.Event()
         self.streamer = None
@@ -37,12 +43,20 @@ class TrackingBridge:
         self.factory = factory
         self.address = address
         self.with_wrist = with_wrist
+        self.on_streamer = on_streamer
+        self.hook_error = None
         self.thread = threading.Thread(target=self.run, daemon=True)
 
     def run(self):
         try:
             self.streamer = self.factory(ip=self.address, record=False,
                                          benchmark_quiet=True, verbose=False)
+            if self.on_streamer is not None:
+                try:
+                    self.on_streamer(self.streamer)
+                except Exception as exc:
+                    self.hook_error = f"{type(exc).__name__}: {exc}"
+                    print(f"Streamer hook failed (hand tracking continues): {self.hook_error}", flush=True)
             previous = None
             sequence = -1
             while not self.stop.is_set():
