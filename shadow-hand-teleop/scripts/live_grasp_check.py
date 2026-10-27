@@ -42,7 +42,9 @@ class LiveHandScript(Script):
         self.data.ctrl[ids] += np.clip(desired[ids] - self.data.ctrl[ids], -LIVE_SLEW * .01, LIVE_SLEW * .01)
         super().step()
         if self.assist is not None:
-            self.assist.update(self.data)
+            for kind, payload in self.assist.update(self.data):
+                if self.recorder is not None:
+                    self.recorder.event(self.data, kind, **payload)
             self.assist_seen |= bool(self.assist.active[SIDE])
 
 
@@ -58,10 +60,12 @@ def in_wrist(data, controller):
     return rotation.T @ (data.body("cup").xpos - data.site_xpos[site])
 
 
-def measure(grasp_assist=False, offset=(0., 0., 0.)):
+def measure(grasp_assist=False, offset=(0., 0., 0.), record_dir=None):
     """Run once; return dict(lifted, slip, tilt) in metres/degrees, plus assist use.
 
     offset (m) shifts the wrap pose, as an imprecise live approach would.
+    record_dir: also record (and auto-label) the run as a scripted_demo
+    episode there; its folder is returned as "directory".
     """
     from view_dual_arms import setup
     model, data, controller, hands = setup("human", workspace=True)
@@ -69,7 +73,13 @@ def measure(grasp_assist=False, offset=(0., 0., 0.)):
     if grasp_assist:
         from grasp_assist import GraspAssist
         assist = GraspAssist(model, hands)
-    script = LiveHandScript(model, data, controller, hands, assist=assist)
+    recorder = None
+    if record_dir is not None:
+        from episode_recorder import EpisodeRecorder
+        recorder = EpisodeRecorder(model, controller, hands, record_dir=record_dir, source="scripted_demo",
+                                   video=False, assist=assist)
+        recorder.start(data)
+    script = LiveHandScript(model, data, controller, hands, recorder=recorder, assist=assist)
     points = waypoints(controller)
     for name in ("pre_grasp_high", "pre_grasp", "grasp"):
         points[name] = points[name] + offset
@@ -90,7 +100,15 @@ def measure(grasp_assist=False, offset=(0., 0., 0.)):
     held = in_wrist(data, controller)
     script.move(points["grasp"] + [0, 0, LIFT], speed=SLOW, settle=0.)
     script.hold(HOLD_SECONDS)
-    return {"lifted": float(data.body("cup").xpos[2] - rest[2]),
+    directory = None
+    if recorder is not None:
+        if assist is not None:
+            for kind, payload in assist.release_all(data, "user_stop"):
+                recorder.event(data, kind, **payload)
+        directory = recorder.stop(data, "user_stop")
+        recorder.close()
+    return {"directory": directory,
+            "lifted": float(data.body("cup").xpos[2] - rest[2]),
             "slip": float(np.linalg.norm(in_wrist(data, controller) - held)),
             "tilt": cup_tilt(data),
             "thj4": float(data.ctrl[hands[SIDE]["THJ4"]]),

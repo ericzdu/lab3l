@@ -202,6 +202,7 @@ def dataset_layout(model):
         "contacts/hand_cup_force": (np.float32, (2,)), "contacts/cup_table": (bool, ()),
         "contacts/cup_tray": (bool, ()), "contacts/hand_hand": (bool, ()),
         "contacts/ncon": (np.int32, ()),
+        "assist/active": (bool, (2,)),
     }
 
 
@@ -224,7 +225,7 @@ class EpisodeRecorder:
     def __init__(self, model, controller, hands, *, record_dir=DEFAULT_RECORD_DIR,
                  task="cup_to_tray", operator="", source="keyboard", wrist_mode="human",
                  workspace=True, scale=0.6, video=True, video_fps=30, video_size=(640, 480),
-                 max_seconds=120.0, auto_label=True):
+                 max_seconds=120.0, auto_label=True, assist=None):
         if source not in SOURCES:
             raise ValueError(f"source must be one of {SOURCES}")
         if not TASK_PATTERN.match(task):
@@ -246,6 +247,8 @@ class EpisodeRecorder:
             self.video = EpisodeVideo(model, fps=video_fps, size=tuple(video_size))
         self.max_seconds = float(max_seconds)
         self.auto_label = auto_label
+        # GraspAssist (--grasp-assist) or None; recorded per sample and in metadata.
+        self.assist = assist
         self.contacts = ContactTables(model)
         self.layout = dataset_layout(model)
         self.cup_body = model.body("cup").id
@@ -399,6 +402,7 @@ class EpisodeRecorder:
         row["scene/cup_linvel"] = velocity[3:]
         for name, value in self.contacts.measure(model, data).items():
             row["contacts/" + name] = value
+        row["assist/active"] = [bool(self.assist and self.assist.active[side]) for side in SIDES]
 
         for name, value in row.items():
             self.buffers[name].append(np.asarray(value, dtype=self.layout[name][0]))
@@ -430,6 +434,9 @@ class EpisodeRecorder:
                       "actuator_names": [model.actuator(i).name for i in range(model.nu)]},
             "software": software_info(),
             "finger_target_names": FINGER_TARGET_NAMES,
+            # Assisted episodes are flagged, never hidden; the labeler ignores this.
+            "grasp_assist": self.assist is not None,
+            "grasp_assist_activations": sum(event["kind"] == "assist_on" for event in self.events),
             "video": video,
             "labels": None,
         })

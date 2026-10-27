@@ -53,8 +53,11 @@ camera input or microphone input are enabled. Remote mode uses third-party
 signaling and, when needed, an encrypted TURN relay.
 
 This first retargeter maps individual finger bend angles, clips joint targets,
-and rate-limits commands. It does NOT reproduce the complete human hand pose:
-spread, thumb opposition, wrist motion, and arm reaching are not implemented.
+and rate-limits commands. Thumb opposition (THJ4) follows how far your thumb
+metacarpal leaves the palm plane (about 10° → 0, 45° → full), and rises toward
+the keyboard fist's value as your fingers close. It does NOT reproduce the
+complete human hand pose: spread, thumb rotation (THJ5), wrist motion, and arm
+reaching are not implemented.
 No fresh packets for 0.5 seconds freezes the full simulation if both hands are
 stale; a single stale hand holds its last actuator target. The SDK does not expose
 per-hand tracking validity in this interface, so a frozen but repeatedly sent
@@ -341,8 +344,7 @@ hold wrists comfortably 20–70 cm apart, and calibrate both together. Implausib
 spacing/gain falls back to the ordinary scale; this is not body-heading
 calibration. The wrist housing radius is 18 mm and the forearm sleeve stops
 3 cm short of the pivot so a bulky casing does not prevent palm contact.
-All collision geometry remains enabled. Thumb opposition/grasping is
-unchanged and has NOT been validated by these changes.
+All collision geometry remains enabled.
 
 Offline tests exercise packet decoding, 25-point fallback, calibration,
 elbow swivel with the wrist held in place, and physical 180-degree palm
@@ -438,6 +440,28 @@ For example: `./run_live_human_arms.command --operator NT --video-fps 15`.
   `--headset-view`, for example
   `./run_live_human_arms.command --auto-recenter --headset-view`.
 
+- `--grasp-assist` (off by default; live and keyboard modes) helps a
+  marginal grasp hold: see "Grasp assist" below.
+
+**Grasp assist.** When the thumb and at least one other finger touch the cup
+and your commanded grip is closed past about 50 % and has stopped closing,
+a weld constraint holds the cup to that palm at its current pose (the cup is
+never moved). It lets go when the grip opens below about 35 %, when the hand
+has not touched the cup for 0.3 s, or on H/reset. The terminal prints
+`Grasp assist ON/OFF`. Episodes recorded with it are flagged, not hidden:
+`assist/active` per sample, `grasp_assist` in metadata, `assist_on`/
+`assist_off` events and an `assist` column in `summarize_episodes.py`. The
+labeler ignores the flag, so assisted grasps are labelled like any other;
+filter on the flag when picking demonstrations for training. The welds exist
+(inactive) in every workspace model, so older episodes still replay.
+
+Grip physics: every cup contact uses condim 4 (torsional friction 0.005), so a
+pinched cup does not spin about the contact; sliding friction, size and mass
+are unchanged, and the cup still slides when pushed and tips when knocked.
+`.venv/bin/python scripts/live_grasp_check.py [--grasp-assist]` closes the
+right hand at the scripted wrap pose only through the live finger mapping,
+lifts 5 cm, holds 2 s and prints lift, slip and tilt (no headset needed).
+
 **Headset view.** `--headset-view` streams the MuJoCo scene to the Vision
 Pro as a floating **2D video window** through Tracking Streamer's WebRTC
 video (the same IP or room code). It is not AR: nothing is placed in your
@@ -480,12 +504,15 @@ with one sample per loop iteration in which physics advanced (~100 Hz):
 | `input/` | raw wrist transform, 25-joint finger skeleton, 27-point arm skeleton, forearm vector, retargeted finger targets, `fresh`, packet age/sequence. NaN/False/-1 in keyboard mode |
 | `scene/` | cup pose (xyz + wxyz) and linear/angular velocity |
 | `contacts/` | hand–cup per finger group (thumb, ff, mf, rf, lf, palm, other), arm–cup, hand–cup normal force, cup–table, cup–tray, hand–hand, `ncon` |
+| `assist/` | `active` (N, 2) left/right: the `--grasp-assist` weld holds the cup. All False without the flag; absent in older episodes |
 | `video/<camera>/` | `frame_time` and `sample_index` of every written frame |
 | `labels/` | per-sample `phase`, plus segments/events/outcome attributes |
 
 Root attribute `events` is a JSON list of record start/stop, pause/resume,
 reset, calibrate (with the wrist-mapper calibration), auto_recenter (side,
-gap), tracking lost/regained, reach-limit on/off and errors. Metadata records the model's joint/actuator
+gap), tracking lost/regained, reach-limit on/off, assist_on/assist_off (side,
+and closure or reason) and errors. Metadata records `grasp_assist` (flag on or
+off) and `grasp_assist_activations`, and the model's joint/actuator
 names, camera intrinsics, software versions and git commit. It never stores
 the Tracking Streamer address or absolute paths. Do not commit recordings.
 
@@ -511,7 +538,7 @@ segment so the labeler can be recalibrated later.
 
 ```bash
 .venv/bin/python scripts/label_episode.py data/episodes            # (re)label all; --dry-run to preview
-.venv/bin/python scripts/summarize_episodes.py --csv episodes.csv  # outcome/phase table
+.venv/bin/python scripts/summarize_episodes.py --csv episodes.csv  # outcome/phase/assist table
 .venv/bin/mjpython scripts/replay_demo.py data/episodes/<id>/episode.h5
 ```
 
@@ -519,7 +546,7 @@ Replay rebuilds the workspace scene, checks that joint/actuator names match,
 restores arms, hands and cup, and prints phase transitions and the outcome.
 Tests: `scripts/test_episode_recorder.py`, `scripts/test_episode_labels.py`,
 `scripts/test_scripted_cup_to_tray.py`, `scripts/test_auto_recenter.py`,
-`scripts/test_check_reach.py`, `scripts/test_headset_view.py`.
+`scripts/test_check_reach.py`, `scripts/test_headset_view.py`, `scripts/test_live_grasp.py`.
 
 
 ## HDF5 recording and replay

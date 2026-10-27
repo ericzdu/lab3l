@@ -156,9 +156,12 @@ connection codes in commits.
   `scripts/check_reach.py` measures this, and `scripts/scripted_cup_to_tray.py`
   is a scripted pick and place that labels as success. A movable shoulder/torso
   base has been discussed but **is not implemented in this branch**.
-- **Approximate live finger retargeting.** Finger spread and full thumb opposition
-  are missing. Offline keyboard grasping has been observed, but live capture
-  is not a validated reliable grasp controller. BunnyVisionPro/dex-retargeting
+- **Approximate live finger retargeting.** Finger spread and thumb rotation
+  (THJ5) are missing; thumb opposition (THJ4) is estimated from tracking.
+  `scripts/live_grasp_check.py` shows a retargeted grasp holding the cup
+  offline, but live capture is not a validated reliable grasp controller.
+  `--grasp-assist` (off by default, flagged in episodes) welds a closed hand
+  to the cup. BunnyVisionPro/dex-retargeting
   has **not** been integrated; evaluating it is a useful separate task.
 - **Release still needs testing.** O now opens gradually, but hand/cup/handle
   contacts can still push or flick the cup. Slow opening is not a guarantee
@@ -188,6 +191,7 @@ reproducibility. Post which area you are taking so others can avoid duplication.
 | Human arm geometry / IK / reach limits | `scripts/human_arms.py` |
 | Input calibration / coordinate mapping | `scripts/arm_control.py`, `scripts/forearm_tracking.py` |
 | Live packet bridge / approximate fingers | `scripts/teleop_shadow_hands.py`, `scripts/hand_retargeting.py` |
+| Live-style grasp check / grasp assist | `scripts/live_grasp_check.py`, `scripts/grasp_assist.py` |
 | Headset video window / overlay | `scripts/headset_view.py`, `scripts/bench_headset_view.py` |
 | Cup / tray / tabletop props | `scripts/workspace_scene.py` (bump `SCENE_VERSION` when they move) |
 | Reach probe / scripted cup-to-tray | `scripts/check_reach.py`, `scripts/scripted_cup_to_tray.py` |

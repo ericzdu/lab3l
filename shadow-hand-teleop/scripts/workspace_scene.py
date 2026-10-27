@@ -69,3 +69,12 @@ def add_workspace(scene):
         cup.add_geom(name=f"cup_handle_{i}",type=mujoco.mjtGeom.mjGEOM_CAPSULE,
             fromto=[*start,*end],size=[.005,0,0],mass=.01,
             rgba=[.95,.72,.28,1],friction=CUP_FRICTION,condim=CUP_CONDIM)
+    # Grasp-assist welds (grasp_assist.py), one per hand, inactive unless
+    # --grasp-assist switches one on. Present in every workspace model so
+    # nq/nv/nu are the same with or without the assist.
+    for side in ("left", "right"):
+        palm = f"{side}_{side[0]}h_palm"
+        if scene.body(palm) is not None:
+            scene.add_equality(name=f"{side}_grasp_assist", type=mujoco.mjtEq.mjEQ_WELD,
+                objtype=mujoco.mjtObj.mjOBJ_BODY, name1=palm, name2="cup", active=False,
+                data=[0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 1])

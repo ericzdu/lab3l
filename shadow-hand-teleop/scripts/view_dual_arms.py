@@ -158,7 +158,7 @@ def configure_camera(camera, overview=False, workspace=False):
 
 
 def recover_native_reset(data, controller, mapper, last_time, finger_motion=None,
-                         recorder=None, auto_recenter=None):
+                         recorder=None, auto_recenter=None, assist=None):
     """Undo the MuJoCo window's own Reset (panel button / Backspace).
 
     That reset calls mj_resetData behind the controller's back: arms drop to
@@ -171,10 +171,14 @@ def recover_native_reset(data, controller, mapper, last_time, finger_motion=None
     if recorder is not None and recorder.recording:
         # Close the episode on the pre-reset clock so its times stay monotonic.
         reset_time, data.time = data.time, last_time
+        if assist:
+            # mj_resetData already cleared the weld; record that it ended.
+            for kind, payload in assist.release_all(data):
+                recorder.event(data, kind, **payload)
         recorder.event(data, "native_reset")
         recorder.stop(data, "reset")
         data.time = reset_time
-    reset_scene(data, controller, mapper, finger_motion)
+    reset_scene(data, controller, mapper, finger_motion, assist=assist)
     if auto_recenter:
         auto_recenter.forget()
     return True
@@ -213,14 +217,20 @@ def toggle_recording(recorder, data, calibrated=True):
     return None
 
 
-def reset_scene(data, controller, mapper, finger_motion=None, recorder=None):
+def reset_scene(data, controller, mapper, finger_motion=None, recorder=None, assist=None):
     """H: save any current episode (end_reason "reset"), then reset arms and cup."""
+    if assist:
+        for kind, payload in assist.release_all(data):
+            if recorder is not None:
+                recorder.event(data, kind, **payload)
     if recorder is not None and recorder.recording:
         recorder.event(data, "reset")
         recorder.stop(data, "reset")
     if finger_motion:
         finger_motion.clear()
     controller.reset(data)
+    if assist:
+        assist.forget()
     for side in SIDES:
         mapper.invalidate(side)
 
@@ -345,6 +355,9 @@ def parse_args():
                              "that (previously calibrated) arm instead of waiting for C (default: off)")
     parser.add_argument("--recenter-window", type=float, default=3.0,
                         help="Seconds a gap may last for --auto-recenter (default 3.0)")
+    parser.add_argument("--grasp-assist", action="store_true",
+                        help="--workspace only: weld a closed hand (thumb + a finger touching) to the "
+                             "cup until it opens; recorded and flagged in episodes (default: off)")
     headset = parser.add_argument_group("headset view (live only): sim view as a 2D video window in Vision Pro")
     headset.add_argument("--headset-view", action="store_true", help="Stream the sim view to the headset")
     # 960x540 @ 20 fps: 1280x720 @ 30 measured over the 15 ms loop budget
@@ -385,6 +398,8 @@ def parse_args():
         parser.error("--headset-fps must be in (0, 60]")
     if not np.isfinite(args.headset_budget_ms) or args.headset_budget_ms <= 0:
         parser.error("--headset-budget-ms must be positive and finite")
+    if args.grasp_assist and not args.workspace:
+        parser.error("--grasp-assist needs the cup (--workspace)")
     if args.auto_recenter and not args.address:
         parser.error("--auto-recenter needs live tracking (--address)")
     if len(args.operator) > 32:
@@ -404,6 +419,10 @@ def main():
     mapper = WristMapper(args.scale)
     model, data, controller, hands = setup(args.wrist, workspace=args.workspace)
     finger_motion=FingerTransition(model) if not args.address else None
+    assist = None
+    if args.grasp_assist:
+        from grasp_assist import GraspAssist
+        assist = GraspAssist(model, hands)
     if args.headless:
         duration = args.seconds or 4
         for _ in range(max(1, int(duration / 0.01))):
@@ -450,7 +469,8 @@ def main():
             source="live" if bridge else "scripted_demo" if args.demo else "keyboard",
             wrist_mode=args.wrist, workspace=args.workspace, scale=args.scale,
             video=args.video, video_fps=args.video_fps, video_size=args.video_size,
-            max_seconds=args.max_episode_seconds, auto_label=not args.no_auto_label)
+            max_seconds=args.max_episode_seconds, auto_label=not args.no_auto_label,
+            assist=assist)
     record_notice = None
     end_reason = "viewer_closed"
     auto_recenter = AutoRecenter(args.recenter_window) if bridge and args.auto_recenter else None
@@ -510,7 +530,7 @@ def main():
                          and not error for side in SIDES}
                 with viewer.lock():
                     if recover_native_reset(data, controller, mapper, last_sim_time,
-                                            finger_motion, recorder, auto_recenter):
+                                            finger_motion, recorder, auto_recenter, assist):
                         print("MuJoCo window Reset detected: arms and cup returned home"
                               + ("; live arms need C" if bridge else "")
                               + ". Prefer Home · H in Hand controls.", flush=True)
@@ -554,7 +574,7 @@ def main():
                                 recorder.event(data, "pause" if paused else "resume")
                             print("PAUSED" if paused else "RESUMED (live arms need C)", flush=True)
                         elif key == glfw.KEY_H:
-                            reset_scene(data, controller, mapper, finger_motion, recorder)
+                            reset_scene(data, controller, mapper, finger_motion, recorder, assist)
                             if auto_recenter:
                                 auto_recenter.forget()
                             print("Reset to home; live arms need C", flush=True)
@@ -636,6 +656,11 @@ def main():
                     if steps:
                         controller.command(data, active=active, dt=control_dt)
                         advance_physics(model, data, controller, steps=steps, finger_motion=finger_motion)
+                        for kind, payload in assist.update(data) if assist else ():
+                            print(f"Grasp assist {'ON' if kind == 'assist_on' else 'OFF'} ({payload['side']}"
+                                  + (f", {payload['reason']}" if "reason" in payload else "") + ")", flush=True)
+                            if recorder:
+                                recorder.event(data, kind, **payload)
                         if recorder and recorder.recording:
                             recorder.sample(data, samples=samples, fresh=fresh, paused=paused, mapper=mapper)
                     else:

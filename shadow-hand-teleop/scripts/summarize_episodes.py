@@ -15,7 +15,7 @@ from episode_recorder import DEFAULT_RECORD_DIR
 
 
 COLUMNS = (["id", "operator", "source", "duration_s", "success", "failure_reason", "confidence"]
-           + [f"t_{phase}" for phase in PHASES] + ["regrasps", "dropped_frames"])
+           + [f"t_{phase}" for phase in PHASES] + ["regrasps", "assist", "dropped_frames"])
 
 
 def episode_row(metadata):
@@ -34,6 +34,9 @@ def episode_row(metadata):
         "confidence": "" if confidence is None else round(confidence, 2),
         **{f"t_{phase}": round(phase_time[phase], 2) if labels else "" for phase in PHASES},
         "regrasps": outcome.get("regrasp_count", ""),
+        # --grasp-assist episodes: "on (n)" with n welds engaged; "" before the flag existed.
+        "assist": ("" if "grasp_assist" not in metadata else
+                   f"on ({metadata.get('grasp_assist_activations', 0)})" if metadata["grasp_assist"] else "off"),
         "dropped_frames": "" if dropped is None else sum(dropped.values()),
     }
 
