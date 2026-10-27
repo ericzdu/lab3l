@@ -150,7 +150,7 @@ def run(record_dir=None, video=False, viewer=False, auto_label=True, quiet=False
             import mujoco.viewer
             from view_dual_arms import configure_camera
             handle = mujoco.viewer.launch_passive(model, data)
-            configure_camera(handle.cam)
+            configure_camera(handle.cam, workspace=True)
         script = Script(model, data, controller, hands, recorder, handle)
         recorder.start(data)
         perform(script)

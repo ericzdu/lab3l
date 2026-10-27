@@ -146,7 +146,7 @@ def main():
             if "_metadata" in arrays:
                 from view_dual_arms import configure_camera
                 with viewer.lock():
-                    configure_camera(viewer.cam)
+                    configure_camera(viewer.cam, workspace=True)
             if comparison:
                 with viewer.lock():
                     viewer.cam.lookat[:] = comparison.lookat

@@ -128,8 +128,22 @@ class PhysicsClock:
         return steps
 
 
-def configure_camera(camera, overview=False):
-    if overview:
+# Human-arm workspace views (cup/tray scene, TABLE_TOP 0.60). Tuned so the
+# operator view shows both hands, the tray and the cup without the shoulders,
+# and the overview shows both whole arms and all props with little empty floor.
+WORKSPACE_OPERATOR_VIEW = dict(lookat=(0.42, -0.05, 0.64), distance=0.95, azimuth=0, elevation=-48)
+WORKSPACE_OVERVIEW = dict(lookat=(0.22, -0.04, 0.74), distance=1.40, azimuth=210, elevation=-34)
+
+
+def configure_camera(camera, overview=False, workspace=False):
+    """Default viewer/recording camera. workspace=True: human-arm cup/tray scene."""
+    if workspace:
+        view = WORKSPACE_OVERVIEW if overview else WORKSPACE_OPERATOR_VIEW
+        camera.lookat[:] = view["lookat"]
+        camera.distance = view["distance"]
+        camera.azimuth = view["azimuth"]
+        camera.elevation = view["elevation"]
+    elif overview:
         camera.lookat[:] = [0.35, 0, 0.46]
         camera.distance = 2.30
         camera.azimuth = 150
@@ -141,6 +155,29 @@ def configure_camera(camera, overview=False):
         camera.distance = 0.95
         camera.azimuth = 0
         camera.elevation = -32
+
+
+def recover_native_reset(data, controller, mapper, last_time, finger_motion=None,
+                         recorder=None, auto_recenter=None):
+    """Undo the MuJoCo window's own Reset (panel button / Backspace).
+
+    That reset calls mj_resetData behind the controller's back: arms drop to
+    their raw zero pose (hands below the table) while targets stay stale.
+    Detect it by sim time jumping backwards, then do exactly what H does.
+    Returns True if a native reset was detected and recovered.
+    """
+    if not data.time + 1e-9 < last_time:
+        return False
+    if recorder is not None and recorder.recording:
+        # Close the episode on the pre-reset clock so its times stay monotonic.
+        reset_time, data.time = data.time, last_time
+        recorder.event(data, "native_reset")
+        recorder.stop(data, "reset")
+        data.time = reset_time
+    reset_scene(data, controller, mapper, finger_motion)
+    if auto_recenter:
+        auto_recenter.forget()
+    return True
 
 
 def save_screenshot(model, data, destination):
@@ -399,11 +436,12 @@ def main():
         # Keep all robot input in the separate control window instead.
         with mujoco.viewer.launch_passive(model, data) as viewer:
             with viewer.lock():
-                configure_camera(viewer.cam)
+                configure_camera(viewer.cam, workspace=args.workspace)
             from control_panel import ControlPanel
             panel = ControlPanel(events, live=bridge is not None, recording=recorder is not None)
             physics_clock = PhysicsClock(model.opt.timestep)
             last_tick = time.monotonic()
+            last_sim_time = data.time
             while viewer.is_running():
                 frame_start = time.monotonic()
                 elapsed = frame_start - last_tick
@@ -414,6 +452,11 @@ def main():
                 fresh = {side: side in samples and frame_start - samples[side][0] < 0.5
                          and not error for side in SIDES}
                 with viewer.lock():
+                    if recover_native_reset(data, controller, mapper, last_sim_time,
+                                            finger_motion, recorder, auto_recenter):
+                        print("MuJoCo window Reset detected: arms and cup returned home"
+                              + ("; live arms need C" if bridge else "")
+                              + ". Prefer Home · H in Hand controls.", flush=True)
                     due = (auto_recenter.update(frame_start, fresh, mapper)
                            if auto_recenter and not paused and not error else [])
                     # Reacquisition must not produce a jump from an old origin.
@@ -440,7 +483,7 @@ def main():
                             quit_requested = True
                         elif key == glfw.KEY_B:
                             overview = not overview
-                            configure_camera(viewer.cam, overview=overview)
+                            configure_camera(viewer.cam, overview=overview, workspace=args.workspace)
                         elif key in (glfw.KEY_1, glfw.KEY_2):
                             selected = "left" if key == glfw.KEY_1 else "right"
                             print(f"Selected {selected} arm", flush=True)
@@ -577,6 +620,7 @@ def main():
                 if panel_status != last_panel_status:
                     panel.status(panel_status)
                     last_panel_status = panel_status
+                last_sim_time = data.time
                 viewer.sync()
                 time.sleep(max(0, 0.01 - (time.monotonic() - frame_start)))
     except KeyboardInterrupt:

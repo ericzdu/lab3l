@@ -46,7 +46,7 @@ class EpisodeVideo:
         self.cameras = {}
         for name in CAMERAS:
             camera = mujoco.MjvCamera()
-            configure_camera(camera, overview=name == "overview")
+            configure_camera(camera, overview=name == "overview", workspace=True)
             self.cameras[name] = camera
         self.queue_size = queue_size
         self.renderer = None
