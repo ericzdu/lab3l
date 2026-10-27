@@ -138,7 +138,9 @@ The Linux equivalent (not validated here) is:
 
 After tracking loss, pause/resume or H reset, press C again. On unreliable
 Wi-Fi, `./run_live_human_arms.command --auto-recenter` re-anchors an arm by
-itself after a tracking gap under 3 s (default off). See README "Tips for live
+itself after a tracking gap under 3 s (default off). Add `--headset-view` to see
+the simulation as a 2D video window in the headset, with a small status
+overlay (not AR; latency depends on Wi-Fi). See README "Tips for live
 recording". C recenters input;
 it does not move the physical simulation base. `ICE closed` plus `WAIT / HOLD`
 means no fresh hand data is reaching this controller; inspect the terminal
@@ -186,6 +188,7 @@ reproducibility. Post which area you are taking so others can avoid duplication.
 | Human arm geometry / IK / reach limits | `scripts/human_arms.py` |
 | Input calibration / coordinate mapping | `scripts/arm_control.py`, `scripts/forearm_tracking.py` |
 | Live packet bridge / approximate fingers | `scripts/teleop_shadow_hands.py`, `scripts/hand_retargeting.py` |
+| Headset video window / overlay | `scripts/headset_view.py`, `scripts/bench_headset_view.py` |
 | Cup / tray / tabletop props | `scripts/workspace_scene.py` (bump `SCENE_VERSION` when they move) |
 | Reach probe / scripted cup-to-tray | `scripts/check_reach.py`, `scripts/scripted_cup_to_tray.py` |
 | Viewer loop / gradual opening | `scripts/view_dual_arms.py` |

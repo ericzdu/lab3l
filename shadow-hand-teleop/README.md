@@ -434,6 +434,35 @@ For example: `./run_live_human_arms.command --operator NT --video-fps 15`.
   re-anchors at its current pose with its previous gains, shows
   `arm FOLLOW (auto)` for a second, and logs an `auto_recenter` event.
   Longer gaps still need C. The default (freeze until C) is unchanged.
+- To see the simulation in the headset instead of on the Mac, add
+  `--headset-view`, for example
+  `./run_live_human_arms.command --auto-recenter --headset-view`.
+
+**Headset view.** `--headset-view` streams the MuJoCo scene to the Vision
+Pro as a floating **2D video window** through Tracking Streamer's WebRTC
+video (the same IP or room code). It is not AR: nothing is placed in your
+room, and latency depends on your Wi-Fi. The window appears once the headset
+connects. Hand tracking and recording keep working if it never does, or if
+the stream fails (the terminal prints one line).
+
+- **What it shows:** by default (`--headset-camera follow`) whatever the Mac
+  viewer camera shows. To adjust the view, move the Mac camera with the mouse
+  or press B for operator/overview. `operator` and `overview` lock the stream
+  to the fixed workspace views instead.
+- **Overlay:** a small strip at the bottom left shows each hand's
+  `LIVE`/`WAIT` and `FOLLOW`/`press C` (plus `REACH` and `(auto)`), a red
+  `REC mm:ss` while recording, and the last saved episode's outcome, so you
+  can tell when to calibrate (C) and whether recording (E) is on without
+  looking at the Mac. The C/E buttons are still in the Mac's Hand controls
+  window: someone at the Mac presses them.
+- **Cost:** defaults are `--headset-size 960x540 --headset-fps 20`.
+  Each streamed frame is an extra offscreen render on the control thread,
+  about 15–20 ms whatever the size. A slow frame skips the next one, so the
+  stream may drop to about 10 fps while recording. With
+  `--headset-camera operator` and recording on, the recorder's operator frame
+  is reused (letterboxed, 640x480) instead of rendering twice.
+  `.venv/bin/mjpython scripts/bench_headset_view.py` measures this on your Mac;
+  close other simulations first.
 
 Each episode is a folder `data/episodes/<YYYYMMDD-HHMMSS>_<task>_<NNNN>/` with
 `episode.h5`, `episode.json` (the same metadata as the HDF5 `metadata`
@@ -487,7 +516,7 @@ Replay rebuilds the workspace scene, checks that joint/actuator names match,
 restores arms, hands and cup, and prints phase transitions and the outcome.
 Tests: `scripts/test_episode_recorder.py`, `scripts/test_episode_labels.py`,
 `scripts/test_scripted_cup_to_tray.py`, `scripts/test_auto_recenter.py`,
-`scripts/test_check_reach.py`.
+`scripts/test_check_reach.py`, `scripts/test_headset_view.py`.
 
 
 ## HDF5 recording and replay
