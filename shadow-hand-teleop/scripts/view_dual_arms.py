@@ -221,6 +221,53 @@ class StatusPrinter:
         return False
 
 
+def cup_at_start(data, tolerance=.02, max_tilt_deg=10.):
+    """Workspace cup resting upright within `tolerance` m of its start position."""
+    from workspace_scene import CUP_START
+    cup = data.body("cup")
+    upright = cup.xmat[8] >= np.cos(np.deg2rad(max_tilt_deg))
+    return bool(upright and np.linalg.norm(cup.xpos - CUP_START) <= tolerance)
+
+
+def control_status(data, fresh, mapper, controller, paused=False, error=None, recorder=None,
+                   headset=None, workspace=False, address=None):
+    """Status for the --control-port client, built from loop state (not terminal text).
+
+    Never contains the tracking address or absolute paths.
+    """
+    reach = getattr(controller, "reach_errors", {})
+    forearm = getattr(mapper, "forearm_alignments", {})
+    status = {
+        "sides": {side: {"live": bool(fresh[side]), "follow": side in mapper.origins,
+                         "forearm": side in forearm, "reach_limit": reach.get(side, 0) > .005}
+                  for side in SIDES},
+        "paused": bool(paused), "error": None, "recording": False, "rec_seconds": None,
+        "episode_counter": None, "notice": None,
+        "headset_view": headset.status if headset else "off",
+        "cup_at_start": cup_at_start(data) if workspace else None,
+        "last_saved": None,
+    }
+    if error:
+        from episode_recorder import scrub
+        text = scrub(error)
+        status["error"] = text.replace(address, "<address>") if address else text
+    if recorder is not None:
+        status["recording"] = bool(recorder.recording)
+        status["rec_seconds"] = round(recorder.elapsed(data), 1) if recorder.recording else None
+        status["episode_counter"] = recorder.counter
+        status["notice"] = recorder.notice
+        if recorder.last_saved:
+            counter, metadata = recorder.last_saved
+            outcome = (metadata.get("labels") or {}).get("outcome") or {}
+            success = outcome.get("success")
+            status["last_saved"] = {
+                "id": counter, "folder": metadata.get("episode_id"),
+                "outcome": "success" if success is True else "fail" if success is False else None,
+                "failure_reason": outcome.get("failure_reason"),
+                "confidence": outcome.get("confidence")}
+    return status
+
+
 def save_screenshot(model, data, destination):
     from PIL import Image
 
@@ -407,6 +454,10 @@ def parse_args():
     parser.add_argument("--clean-ui", action="store_true",
                         help="Presentation view: hide the MuJoCo side panels and the green target "
                              "spheres, start on the workspace operator camera")
+    parser.add_argument("--control-port", type=int, default=None,
+                        help="Accept one localhost control client on this port (lab3l Studio); default off")
+    parser.add_argument("--control-token", default=None,
+                        help="Shared secret the control client must send with every key")
     parser.add_argument("--no-panel", action="store_true",
                         help="Do not open the Hand controls window (keys then come only from "
                              "--control-port, e.g. lab3l Studio)")
@@ -450,6 +501,10 @@ def parse_args():
         parser.error("--headset-fps must be in (0, 60]")
     if not np.isfinite(args.headset_budget_ms) or args.headset_budget_ms <= 0:
         parser.error("--headset-budget-ms must be positive and finite")
+    if args.control_port is not None and not 0 < args.control_port < 65536:
+        parser.error("--control-port must be 1-65535")
+    if args.control_port is not None and not args.control_token:
+        parser.error("--control-port needs --control-token")
     if args.grasp_assist and not args.workspace:
         parser.error("--grasp-assist needs the cup (--workspace)")
     if args.auto_recenter and not args.address:
@@ -566,6 +621,11 @@ def main():
         print("I/K: bend wrist up/down | J/L: tilt left/right | U/P: turn palm about forearm", flush=True)
         print("Offline keyboard mode. Vision Pro is not required." +
               (" Press E to record an episode." if recorder else " No data is recorded."), flush=True)
+    control = None
+    if args.control_port is not None:
+        from sim_control import ControlServer
+        control = ControlServer(events, args.control_port, args.control_token)
+        print(f"Control channel on 127.0.0.1:{control.port}.", flush=True)
     started = time.monotonic()
     panel = None
     quit_requested = False
@@ -766,6 +826,9 @@ def main():
                 if panel and panel_status != last_panel_status:
                     panel.status(panel_status)
                     last_panel_status = panel_status
+                if control:
+                    control.publish(control_status(data, fresh, mapper, controller, paused, error,
+                                                   recorder, headset, args.workspace, args.address))
                 if headset:
                     lines = headset_lines(fresh, mapper, controller, paused, error, recorder,
                                           data, auto_recenter, frame_start)
@@ -797,6 +860,8 @@ def main():
             headset.close()
         if panel:
             panel.close()
+        if control:
+            control.close()
         if bridge:
             bridge.close()
         if args.screenshot:
