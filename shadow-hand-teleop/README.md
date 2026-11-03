@@ -381,6 +381,74 @@ and the cup if the cup has been thrown outside reach. No movable base or torso i
 keys, reset and reach warnings; a live/user grasp-and-release test is still
 needed to confirm the cup no longer gets pushed during opening.
 
+## lab3l Studio (demo cut)
+
+A local web page for a recording session with no terminal: start the sim,
+calibrate, record, and see the labeled result with video seconds later.
+It is built for a projector (large type, high contrast).
+
+```bash
+./run_studio.command
+```
+
+This starts the server on `http://127.0.0.1:8765` (this Mac only) and opens
+the page. From `scripts/` the same is `../.venv/bin/python -m studio.server`.
+
+1. **Connect.** Enter the Tracking Streamer IP or room code (kept in this
+   browser's localStorage only, never written to disk or logs), an optional
+   operator tag, and the toggles: auto-recenter (on), headset view (on),
+   grasp assist (off). **Start** launches the sim
+   (`view_dual_arms.py --wrist human --workspace --clean-ui --no-panel`)
+   with no Hand controls window; the page replaces it. The form folds away;
+   "Session settings" reopens it.
+2. **Follow the steps.** The two hand chips show green (LIVE and FOLLOW),
+   amber (LIVE but needs Calibrate) or grey (no tracking). The guide
+   highlights the next step: **① Reset** (H) if the cup is not at its start,
+   **② Calibrate** (C) if an arm is not following, else **③ Record** (E).
+   Record turns red with a timer; press it (or E) again to stop and save.
+   Discard is X. The H/C/E/X keys work while the page has focus.
+3. **Watch the result.** When the episode is saved, the result card shows
+   the outcome (**SUCCESS** or **FAIL · dropped outside tray**, and so on),
+   a confidence bar, placed or dropped in, and the overview video playing
+   muted (Operator on a tab). Under it, a phase timeline with event ticks
+   and a playhead (click to seek), and a one-line phase summary such as
+   `reach 1.1 s · grasp 1.1 s · lift · transport 3.8 s · place 1.9 s ·
+   release · retreat`.
+
+The episode cards on the right list kept episodes (not `_junk`) with their
+outcome; click one to load it, which is also the fallback if a live attempt
+fails. **Show log** shows the sim's last 200 output lines (in memory only,
+with the address removed); it opens by itself with the exit code if the sim
+crashes. **Stop session** sends Esc, so an open episode is saved. Closing
+the terminal or Ctrl-C stops the sim the same way.
+
+Security: the server binds 127.0.0.1, accepts only `Host` 127.0.0.1/localhost
+on its port, needs a per-start token (injected into the page) on every POST,
+and serves only episode folders inside `data/episodes`. Measured with
+Studio connected and polling while recording 30 fps video: loop period
+12.8 ms median, 14.7 ms p95 (keyboard scene, no tracking or headset view).
+Not in this cut: review corrections, junk/restore, notes, export and
+filters (`docs/SPEC_studio_ui.md`). `docs/DEMO_CHECKLIST.md` is the
+checklist for a live demo.
+
+The viewer flags behind it work on their own too:
+
+- `--clean-ui`: hide the MuJoCo side panels and the green target spheres
+  (alpha only; recorded state is unchanged, and videos no longer show the
+  spheres), and start on the workspace operator camera. Not `--demo`, which
+  already means offline scripted arm motion.
+- `--no-panel`: no Hand controls window.
+- `--control-port N --control-token T`: one localhost client sends keys
+  (`C E X H B space 1 2 esc`, JSON lines) and receives status at up to
+  10 Hz (`scripts/sim_control.py`).
+
+In live mode the Hand controls window now shows only the status line and six
+large buttons (Calibrate, Record/Stop, Discard, Reset, Pause, Switch view).
+The terminal status line prints at most once a second, but at once when an
+arm starts or stops following, on pause, recording and errors. The live
+launchers set `GRPC_VERBOSITY=ERROR` to hide gRPC's `fork_posix.cc` and
+`ev_poll_posix.cc` lines; errors still print.
+
 ## Recording episodes
 
 The human-arm workspace scene (`--wrist human --workspace`, i.e. both
@@ -565,7 +633,9 @@ Replay rebuilds the workspace scene, checks that joint/actuator names match,
 restores arms, hands and cup, and prints phase transitions and the outcome.
 Tests: `scripts/test_episode_recorder.py`, `scripts/test_episode_labels.py`,
 `scripts/test_scripted_cup_to_tray.py`, `scripts/test_auto_recenter.py`,
-`scripts/test_check_reach.py`, `scripts/test_headset_view.py`, `scripts/test_live_grasp.py`.
+`scripts/test_check_reach.py`, `scripts/test_headset_view.py`, `scripts/test_live_grasp.py`,
+`scripts/test_clean_ui.py`, `scripts/test_sim_control.py`, `scripts/test_studio_api.py`,
+`scripts/test_studio_session.py`.
 
 
 ## HDF5 recording and replay

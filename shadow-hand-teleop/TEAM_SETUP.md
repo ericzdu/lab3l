@@ -119,6 +119,10 @@ are not bundled here. Use `run_live_human_arms.command` or the included original
 
 ## 5. Optional live Vision Pro control
 
+For recording sessions and demos, `./run_studio.command` (README "lab3l
+Studio (demo cut)") does the steps below from one browser page: enter the IP
+or room code, Start, then Reset → Calibrate → Record. The manual route:
+
 1. Open Tracking Streamer on the headset, press Start, and keep it worn/active.
 2. Prefer the current Local Network IP when both devices share a Wi-Fi/LAN.
    A current external room code is another option. Network isolation may still
@@ -191,6 +195,8 @@ reproducibility. Post which area you are taking so others can avoid duplication.
 | Human arm geometry / IK / reach limits | `scripts/human_arms.py` |
 | Input calibration / coordinate mapping | `scripts/arm_control.py`, `scripts/forearm_tracking.py` |
 | Live packet bridge / approximate fingers | `scripts/teleop_shadow_hands.py`, `scripts/hand_retargeting.py` |
+| lab3l Studio (page, server, session) | `scripts/studio/`, `run_studio.command` |
+| Sim control channel (`--control-port`) | `scripts/sim_control.py` |
 | Live-style grasp check / grasp assist | `scripts/live_grasp_check.py`, `scripts/grasp_assist.py` |
 | Headset video window / overlay | `scripts/headset_view.py`, `scripts/bench_headset_view.py` |
 | Cup / tray / tabletop props | `scripts/workspace_scene.py` (bump `SCENE_VERSION` when they move) |
