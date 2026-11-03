@@ -8,6 +8,7 @@ simulated robot state (see episode_recorder.py). No policy or hardware control.
 from __future__ import annotations
 
 import argparse
+import os
 from pathlib import Path
 from queue import Empty, SimpleQueue
 import time
@@ -182,6 +183,42 @@ def recover_native_reset(data, controller, mapper, last_time, finger_motion=None
     if auto_recenter:
         auto_recenter.forget()
     return True
+
+
+def hide_goal_markers(model):
+    """--clean-ui: make the green {side}_goal target spheres invisible.
+
+    Only their alpha changes (also in recorded videos); nq/nv/nu, mocap
+    targets and recorded state are untouched.
+    """
+    for side in SIDES:
+        body = model.body(f"{side}_goal").id
+        model.geom_rgba[model.geom_bodyid == body, 3] = 0
+
+
+class StatusPrinter:
+    """Print the per-hand status line at most once per `interval` seconds.
+
+    A change of `urgent` (FOLLOW/press C per side, paused, recording, error
+    text) prints at once, so nothing important waits or is hidden; other
+    changes (LIVE/WAIT flicker, forearm, reach) are coalesced.
+    """
+    def __init__(self, interval=1.0, write=None):
+        self.interval = interval
+        self.write = write or (lambda text: print(text, flush=True))
+        self.printed = self.urgent = None
+        self.last = -np.inf
+
+    def update(self, status, now, urgent=()):
+        urgent = tuple(urgent)
+        if status == self.printed:
+            self.urgent = urgent
+            return False
+        if urgent != self.urgent or now - self.last >= self.interval:
+            self.write(status)
+            self.printed, self.urgent, self.last = status, urgent, now
+            return True
+        return False
 
 
 def save_screenshot(model, data, destination):
@@ -367,6 +404,12 @@ def parse_args():
     parser.add_argument("--grasp-assist", action="store_true",
                         help="--workspace only: weld a closed hand (thumb + a finger touching) to the "
                              "cup until it opens; recorded and flagged in episodes (default: off)")
+    parser.add_argument("--clean-ui", action="store_true",
+                        help="Presentation view: hide the MuJoCo side panels and the green target "
+                             "spheres, start on the workspace operator camera")
+    parser.add_argument("--no-panel", action="store_true",
+                        help="Do not open the Hand controls window (keys then come only from "
+                             "--control-port, e.g. lab3l Studio)")
     headset = parser.add_argument_group("headset view (live only): sim view as a 2D video window in Vision Pro")
     headset.add_argument("--headset-view", action="store_true", help="Stream the sim view to the headset")
     # 960x540 @ 20 fps: 1280x720 @ 30 goes over the render budget on about
@@ -460,6 +503,10 @@ def main():
 
     bridge = None
     if args.address:
+        # Quiet gRPC's fork/poll INFO lines unless the caller chose otherwise
+        # (must be set before gRPC loads); errors still print.
+        os.environ.setdefault("GRPC_VERBOSITY", "ERROR")
+        os.environ.setdefault("GLOG_minloglevel", "2")
         # The SDK installs signal handlers; import and construct on main thread.
         from avp_stream import VisionProStreamer
         from teleop_shadow_hands import TrackingBridge
@@ -486,9 +533,14 @@ def main():
 
     events = SimpleQueue()
     selected, paused, overview = "right", False, False
-    last_status = last_panel_status = None
+    last_panel_status = None
+    status_printer = StatusPrinter()
+    workspace_view = args.workspace or args.clean_ui
+    if args.clean_ui:
+        hide_goal_markers(model)
     print(f"Two arms + Shadow Hands; wrist assembly: {args.wrist}.", flush=True)
-    print("Use buttons/keyboard in the separate 'Holos — Hand controls' window.", flush=True)
+    print("Use buttons/keyboard in the separate 'Holos — Hand controls' window." if not args.no_panel
+          else "No Hand controls window (--no-panel): keys come from the control channel.", flush=True)
     print("The MuJoCo window keeps its native camera/display shortcuts; robot keys are NOT bound there.", flush=True)
     print("1: select LEFT | 2: select RIGHT | W/S: forward/back | A/D: left/right | R/V: up/down", flush=True)
     print("H: reset home | SPACE: pause/resume", flush=True)
@@ -520,11 +572,13 @@ def main():
     try:
         # The stock viewer processes its shortcuts before its Python callback.
         # Keep all robot input in the separate control window instead.
-        with mujoco.viewer.launch_passive(model, data) as viewer:
+        with mujoco.viewer.launch_passive(model, data, show_left_ui=not args.clean_ui,
+                                          show_right_ui=not args.clean_ui) as viewer:
             with viewer.lock():
-                configure_camera(viewer.cam, workspace=args.workspace)
-            from control_panel import ControlPanel
-            panel = ControlPanel(events, live=bridge is not None, recording=recorder is not None)
+                configure_camera(viewer.cam, workspace=workspace_view)
+            if not args.no_panel:
+                from control_panel import ControlPanel
+                panel = ControlPanel(events, live=bridge is not None, recording=recorder is not None)
             physics_clock = PhysicsClock(model.opt.timestep)
             last_tick = time.monotonic()
             last_sim_time = data.time
@@ -569,7 +623,7 @@ def main():
                             quit_requested = True
                         elif key == glfw.KEY_B:
                             overview = not overview
-                            configure_camera(viewer.cam, overview=overview, workspace=args.workspace)
+                            configure_camera(viewer.cam, overview=overview, workspace=workspace_view)
                         elif key in (glfw.KEY_1, glfw.KEY_2):
                             selected = "left" if key == glfw.KEY_1 else "right"
                             print(f"Selected {selected} arm", flush=True)
@@ -702,13 +756,14 @@ def main():
                         status += ' · Gradual hand motion'
                     if getattr(controller,'reach_errors',{}).get(selected,0)>.005:
                         status += ' · REACH LIMIT: move target closer'
-                # The REC timer updates the panel only, not the terminal.
-                if status != last_status:
-                    print(status, flush=True)
-                    last_status = status
+                # The REC timer updates the panel only, not the terminal; the
+                # terminal line is throttled (StatusPrinter) except for urgent changes.
+                status_printer.update(status, frame_start, urgent=(
+                    tuple(side in mapper.origins for side in SIDES), paused, error,
+                    bool(recorder and recorder.recording)))
                 note = recorder.status_text(data) if recorder else record_notice
                 panel_status = status + (" · " + note if note else "")
-                if panel_status != last_panel_status:
+                if panel and panel_status != last_panel_status:
                     panel.status(panel_status)
                     last_panel_status = panel_status
                 if headset:

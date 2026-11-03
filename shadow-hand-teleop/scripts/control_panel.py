@@ -17,6 +17,42 @@ KEYS = set(map(ord, "12WASDRVIKJLUPFOHCBEX ")) | {256}
 LIVE_KEYS = set(map(ord, "12HCBEX "))
 
 
+# Keyboard (offline) mode: movement pairs, then the session controls.
+MOVEMENT_ROWS = [
+    ("Forward · W", "W", "Back · S", "S"),
+    ("Left · A", "A", "Right · D", "D"),
+    ("Up · R", "R", "Down · V", "V"),
+    ("Bend up · I", "I", "Bend down · K", "K"),
+    ("Tilt left · J", "J", "Tilt right · L", "L"),
+    ("Turn palm · U", "U", "Turn back · P", "P"),
+    ("Close slowly · F", "F", "Open slowly · O", "O"),
+]
+SESSION_CONTROLS = [
+    ("Home · H", ord("H")), ("Calibrate · C", ord("C")),
+    ("Pause / resume · Space", 32), ("Switch view · B", ord("B")),
+    ("Record · E", ord("E")), ("Discard · X", ord("X")),
+]
+# Live mode: only the controls that work while tracking drives the arms.
+LIVE_CONTROLS = [
+    ("Calibrate · C", ord("C")), ("Record / Stop · E", ord("E")),
+    ("Discard · X", ord("X")), ("Reset · H", ord("H")),
+    ("Pause · Space", 32), ("Switch view · B", ord("B")),
+]
+
+
+def button_grid(live, recording):
+    """[(text, key, enabled)] in reading order, two per row.
+
+    Live mode shows just the six session controls (larger, in gui()); the
+    keyboard layout keeps every movement button.
+    """
+    if live:
+        return [(text, key, recording or key not in (ord("E"), ord("X"))) for text, key in LIVE_CONTROLS]
+    grid = [(row[i], ord(row[i + 1]), True) for row in MOVEMENT_ROWS for i in (0, 2)]
+    return grid + [(text, key, key != ord("C") and (recording or key not in (ord("E"), ord("X"))))
+                   for text, key in SESSION_CONTROLS]
+
+
 class ControlPanel:
     def __init__(self, events, live=False, recording=False):
         self.events = events
@@ -81,9 +117,6 @@ def gui(live, recording=False):
     root.resizable(False, False)
     frame = ttk.Frame(root, padding=14)
     frame.grid(sticky="nsew")
-    ttk.Label(frame, text="Hand controls", font=("Helvetica", 16, "bold")).grid(row=0, column=0, columnspan=2, sticky="w")
-    ttk.Label(frame, text="Click this window before using the keyboard.\nUse the simulation window for mouse/camera controls.").grid(
-        row=1, column=0, columnspan=2, sticky="w", pady=(4, 10))
     selected = tk.StringVar(value="right")
     status = tk.StringVar(value="Waiting for hand tracking…" if live else "Offline keyboard mode")
 
@@ -94,38 +127,30 @@ def gui(live, recording=False):
         # Keep Space from also activating whichever button was last clicked.
         root.focus_set()
 
-    for col, side in enumerate(("left", "right")):
-        ttk.Radiobutton(frame, text=f"{col + 1}: {side.title()} arm", variable=selected, value=side,
-            takefocus=False, command=lambda key=ord("1") + col: emit(key)).grid(row=2, column=col, sticky="w", pady=(0, 8))
-
-    rows = [
-        ("Forward · W", "W", "Back · S", "S"),
-        ("Left · A", "A", "Right · D", "D"),
-        ("Up · R", "R", "Down · V", "V"),
-        ("Bend up · I", "I", "Bend down · K", "K"),
-        ("Tilt left · J", "J", "Tilt right · L", "L"),
-        ("Turn palm · U", "U", "Turn back · P", "P"),
-        ("Close slowly · F", "F", "Open slowly · O", "O"),
-    ]
-    for row, items in enumerate(rows, start=3):
-        for col in range(2):
-            text, key = items[2 * col: 2 * col + 2]
-            ttk.Button(frame, text=text, width=20, takefocus=False, state="disabled" if live else "normal",
-                command=lambda key=key: emit(ord(key))).grid(row=row, column=col, padx=3, pady=3, sticky="ew")
-    controls = [
-        ("Home · H", ord("H")), ("Calibrate · C", ord("C")),
-        ("Pause / resume · Space", 32), ("Switch view · B", ord("B")),
-        ("Record · E", ord("E")), ("Discard · X", ord("X")),
-    ]
-    for i, (text, key) in enumerate(controls):
-        disabled = (key == ord("C") and not live) or (key in (ord("E"), ord("X")) and not recording)
-        ttk.Button(frame, text=text, width=20, takefocus=False,
-            state="disabled" if disabled else "normal",
-            command=lambda key=key: emit(key)).grid(row=10 + i // 2, column=i % 2, padx=3, pady=3, sticky="ew")
-    ttk.Label(frame, textvariable=status, wraplength=340).grid(row=13, column=0, columnspan=2, sticky="w", pady=(10, 4))
     if live:
-        ttk.Label(frame, text="Press C here to calibrate.\nForearm ON = usable data + calibrated guide;\nunavailable = wrist-only fallback.",
-            wraplength=340).grid(row=14, column=0, columnspan=2, sticky="w")
+        # Compact live window: the status line and six large session buttons.
+        ttk.Style().configure("Big.TButton", font=("Helvetica", 18), padding=(10, 14))
+        ttk.Label(frame, textvariable=status, wraplength=440, font=("Helvetica", 14)).grid(
+            row=0, column=0, columnspan=2, sticky="w", pady=(0, 10))
+        first = 1
+        style, width = "Big.TButton", 16
+    else:
+        ttk.Label(frame, text="Hand controls", font=("Helvetica", 16, "bold")).grid(row=0, column=0, columnspan=2, sticky="w")
+        ttk.Label(frame, text="Click this window before using the keyboard.\nUse the simulation window for mouse/camera controls.").grid(
+            row=1, column=0, columnspan=2, sticky="w", pady=(4, 10))
+        for col, side in enumerate(("left", "right")):
+            ttk.Radiobutton(frame, text=f"{col + 1}: {side.title()} arm", variable=selected, value=side,
+                takefocus=False, command=lambda key=ord("1") + col: emit(key)).grid(row=2, column=col, sticky="w", pady=(0, 8))
+        first = 3
+        style, width = "TButton", 20
+    grid = button_grid(live, recording)
+    for i, (text, key, enabled) in enumerate(grid):
+        ttk.Button(frame, text=text, width=width, style=style, takefocus=False,
+            state="normal" if enabled else "disabled",
+            command=lambda key=key: emit(key)).grid(row=first + i // 2, column=i % 2, padx=3, pady=3, sticky="ew")
+    if not live:
+        ttk.Label(frame, textvariable=status, wraplength=340).grid(
+            row=first + len(grid) // 2, column=0, columnspan=2, sticky="w", pady=(10, 4))
 
     def keypress(event):
         # Keep ordinary copy/menu shortcuts from becoming robot commands.

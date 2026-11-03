@@ -12,6 +12,8 @@ if [[ -z "$address" ]]; then
   exit 1
 fi
 
+# Silence gRPC fork/poll INFO lines (fork_posix.cc, ev_poll_posix.cc); errors still print.
+export GRPC_VERBOSITY=ERROR GLOG_minloglevel=2
 exec "$PWD/.venv/bin/python" \
   "$PWD/third_party/VisionProTeleop/examples/12_diffik_shadow_hand.py" \
   --ip "$address"
