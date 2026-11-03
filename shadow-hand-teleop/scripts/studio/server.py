@@ -90,6 +90,47 @@ def create_app(episodes_dir=None, port=DEFAULT_PORT, token=None, session=None):
             abort(404)
         return send_file(path, mimetype="video/mp4", conditional=True, max_age=0)
 
+    def live():
+        if app.config["SESSION"] is None:
+            abort(503, "no live session support")
+        return app.config["SESSION"]
+
+    @app.get("/api/session")
+    def session_state():
+        return jsonify(live().state())
+
+    @app.get("/api/session/log")
+    def session_log():
+        return jsonify({"lines": live().log_lines()})
+
+    @app.post("/api/session/start")
+    def session_start():
+        body = request.get_json(silent=True) or {}
+        try:
+            live().start(body.get("address"), operator=body.get("operator", ""),
+                         auto_recenter=bool(body.get("auto_recenter", True)),
+                         headset_view=bool(body.get("headset_view", True)),
+                         grasp_assist=bool(body.get("grasp_assist", False)))
+        except ValueError as exc:
+            return jsonify({"error": str(exc)}), 400
+        except RuntimeError as exc:
+            return jsonify({"error": str(exc)}), 409
+        return jsonify(live().state())
+
+    @app.post("/api/session/stop")
+    def session_stop():
+        live().stop()
+        return jsonify(live().state())
+
+    @app.post("/api/session/key")
+    def session_key():
+        key = (request.get_json(silent=True) or {}).get("key")
+        try:
+            sent = live().send_key(key)
+        except ValueError as exc:
+            return jsonify({"error": str(exc)}), 400
+        return jsonify({"sent": sent}), 200 if sent else 409
+
     return app
 
 
@@ -103,14 +144,30 @@ def parse_args(argv=None):
 
 def main(argv=None):
     args = parse_args(argv)
-    app = create_app(args.episodes, port=args.port)
+    from studio.session import Session
+    session = Session()
+    app = create_app(args.episodes, port=args.port, session=session)
     url = f"http://{HOST}:{args.port}/"
     print(f"lab3l Studio: {url}  (Ctrl-C stops it)", flush=True)
     if args.open:
         import threading
         import webbrowser
         threading.Timer(.8, webbrowser.open, args=(url,)).start()
-    app.run(host=HOST, port=args.port, threaded=True, use_reloader=False)
+    import signal
+
+    def closing(signum, frame):
+        raise SystemExit(0)
+
+    # Closing the terminal window (SIGHUP) or a plain kill still stops the sim cleanly.
+    signal.signal(signal.SIGHUP, closing)
+    signal.signal(signal.SIGTERM, closing)
+    try:
+        app.run(host=HOST, port=args.port, threaded=True, use_reloader=False)
+    finally:
+        # Ctrl-C or the terminal closing: Esc to the sim (saves an open episode), then kill.
+        if session.running():
+            print("Stopping the simulation…", flush=True)
+            session.stop()
 
 
 if __name__ == "__main__":
