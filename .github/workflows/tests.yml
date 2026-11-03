@@ -1,0 +1,41 @@
+name: tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  pytest:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: shadow-hand-teleop
+    env:
+      MUJOCO_GL: egl
+      MENAGERIE_CACHE_DIR: ${{ github.workspace }}/shadow-hand-teleop/.cache/mujoco_menagerie
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install EGL for headless MuJoCo rendering
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libegl1 libgl1
+
+      - uses: astral-sh/setup-uv@v6
+        with:
+          python-version: "3.14"
+          enable-cache: true
+          cache-dependency-glob: shadow-hand-teleop/requirements*.txt
+
+      - name: Cache MuJoCo Menagerie models
+        uses: actions/cache@v4
+        with:
+          path: shadow-hand-teleop/.cache/mujoco_menagerie
+          key: menagerie-${{ hashFiles('shadow-hand-teleop/requirements.txt') }}
+
+      - name: Install dependencies
+        run: |
+          uv venv
+          uv pip install -r requirements-dev.txt
+
+      - name: Run tests
+        run: uv run --no-project pytest -v

@@ -83,6 +83,17 @@ MENAGERIE_CACHE_DIR="$PWD/.cache/mujoco_menagerie" \
   .venv/bin/python scripts/check_setup.py
 ```
 
+## Run the tests
+
+All `scripts/test_*.py` files run under pytest (config in `pytest.ini`). CI runs
+the same suite on every push to `main` and every pull request
+(`.github/workflows/tests.yml`).
+
+```bash
+uv pip install --python .venv/bin/python -r requirements-dev.txt
+MENAGERIE_CACHE_DIR="$PWD/.cache/mujoco_menagerie" .venv/bin/python -m pytest
+```
+
 ## Connect Apple Vision Pro later
 
 1. Install and open **Tracking Streamer** on Apple Vision Pro.
