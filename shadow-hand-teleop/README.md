@@ -62,6 +62,28 @@ a trained policy. Two robot arms have not been added yet.
 
 Offline checks: `.venv/bin/python scripts/test_hand_retargeting.py`.
 
+## Live two-hand webcam control
+
+Run `run_webcam_dual_hands.command` to drive both Shadow Hands from the laptop
+webcam instead of the Vision Pro. macOS asks for camera permission the first time;
+grant it to Terminal (System Settings > Privacy & Security > Camera). A mirrored
+preview window draws the tracked landmarks (blue left, orange right) next to the
+MuJoCo window. SPACE in the MuJoCo window pauses; Q/Esc in the preview or closing
+either window stops. Nothing is recorded.
+
+Options: `--camera 1` selects another camera; `--smoothing 0..0.95` sets target
+smoothing (default 0.5, higher is steadier but laggier).
+
+Tracking uses MediaPipe Hand Landmarker (`mediapipe` in requirements). Its model
+is downloaded once to `.cache/mediapipe/hand_landmarker.task`. MediaPipe's 3D
+world landmarks feed the same flexion retargeter, limits, rate limiter and 0.5 s
+stale-hand hold as the Vision Pro demo. MediaPipe has no finger metacarpal joints,
+so the wrist stands in for them when measuring knuckle bend. Depth from a single
+camera is estimated, so fingers pointing at the lens bend less reliably; side-on
+or palm-facing views work best.
+
+Offline checks: `.venv/bin/python scripts/test_webcam_shadow_hands.py`.
+
 ## Mock teleoperation/data-collection demo
 
 Before the Vision Pro is available, double-click `run_mock_demo.command`. The
