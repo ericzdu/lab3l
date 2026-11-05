@@ -20,7 +20,21 @@ from view_dual_shadow_hands import build_model
 
 
 class TrackingBridge:
-    def __init__(self, factory, address, with_wrist=False):
+    """Latest per-side packet, read by the viewer loop.
+
+    Each side maps to (receipt time, finger targets). With with_wrist=True
+    the tuple continues: [2] validated wrist transform, [3] forearm vector or
+    None, [4] raw (25,4,4) finger skeleton copy, [5] raw 27-point arm skeleton
+    copy or None, [6] bridge-wide packet sequence number. Indices 0-3 are
+    relied on elsewhere and never change.
+
+    on_streamer, if given, is called once with the streamer right after it
+    is constructed, on this bridge's background thread (e.g. to set up
+    outbound video). Its exceptions are stored in hook_error and printed;
+    they never stop hand tracking. It must return promptly: tracking is not
+    polled until it does.
+    """
+    def __init__(self, factory, address, with_wrist=False, on_streamer=None):
         self.lock = threading.Lock()
         self.stop = threading.Event()
         self.streamer = None
@@ -29,13 +43,22 @@ class TrackingBridge:
         self.factory = factory
         self.address = address
         self.with_wrist = with_wrist
+        self.on_streamer = on_streamer
+        self.hook_error = None
         self.thread = threading.Thread(target=self.run, daemon=True)
 
     def run(self):
         try:
             self.streamer = self.factory(ip=self.address, record=False,
                                          benchmark_quiet=True, verbose=False)
+            if self.on_streamer is not None:
+                try:
+                    self.on_streamer(self.streamer)
+                except Exception as exc:
+                    self.hook_error = f"{type(exc).__name__}: {exc}"
+                    print(f"Streamer hook failed (hand tracking continues): {self.hook_error}", flush=True)
             previous = None
+            sequence = -1
             while not self.stop.is_set():
                 sample = self.streamer.get_latest()
                 if sample is not None:
@@ -44,6 +67,7 @@ class TrackingBridge:
                     raw = sample._raw
                     if raw is not previous:
                         previous = raw
+                        sequence += 1
                         packet = {}
                         for side in ("left", "right"):
                             try:
@@ -61,6 +85,16 @@ class TrackingBridge:
                                     except KeyError:
                                         arm = None
                                     entry = (*entry, forearm_vector(arm, wrist))
+                                    # Raw input for recording; retargeters change,
+                                    # so recordings must keep what was received.
+                                    fingers = np.array(sample[f"{side}_fingers"], dtype=float)
+                                    raw_arm = None
+                                    if arm is not None:
+                                        try:
+                                            raw_arm = np.array(arm, dtype=float)
+                                        except (ValueError, TypeError):
+                                            raw_arm = None
+                                    entry = (*entry, fingers, raw_arm, sequence)
                                 packet[side] = entry
                             except (ValueError, KeyError, TypeError):
                                 pass

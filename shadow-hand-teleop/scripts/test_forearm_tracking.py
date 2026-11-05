@@ -84,6 +84,57 @@ class ForearmTests(unittest.TestCase):
             finally:
                 bridge.close()
 
+    def test_bridge_appends_raw_input_and_sequence(self):
+        fingers=synthetic_skeleton(.3)
+        arm=skeleton27()
+        class Packet(dict):
+            pass
+        packets=[]
+        def make(with_arm):
+            packet=Packet(left_fingers=fingers.copy(),left_wrist=np.eye(4)[None],
+                          right_fingers=fingers.copy(),right_wrist=np.eye(4))
+            if with_arm:
+                packet['left_arm']=arm.copy()
+            packet._raw=object()
+            return packet
+        packets.append(make(True))
+        class FakeStreamer:
+            def __init__(self,**kwargs):
+                pass
+            def get_latest(self):
+                return packets[-1]
+            def cleanup(self):
+                pass
+        bridge=TrackingBridge(FakeStreamer,'test',with_wrist=True)
+        bridge.thread.start()
+        try:
+            def wait_for(sequence):
+                deadline=time.monotonic()+2
+                while time.monotonic()<deadline:
+                    samples=bridge.snapshot()[0]
+                    if 'left' in samples and samples['left'][6]>=sequence:
+                        return samples
+                    bridge.stop.wait(.01)
+                self.fail('bridge did not deliver packet')
+            samples=wait_for(0)
+            left=samples['left']
+            self.assertEqual(len(left),7)
+            self.assertEqual(left[4].shape,(25,4,4))
+            np.testing.assert_array_equal(left[4],fingers)
+            np.testing.assert_array_equal(left[5],arm)
+            self.assertIsNone(samples['right'][5])
+            self.assertEqual(left[6],samples['right'][6])
+            # Copies: later SDK buffer reuse must not alter stored input.
+            packets[-1]['left_fingers'][0,0,3]=99
+            self.assertEqual(left[4][0,0,3],fingers[0,0,3])
+            first=left[6]
+            packets.append(make(False))
+            samples=wait_for(first+1)
+            self.assertGreater(samples['left'][6],first)
+            self.assertIsNone(samples['left'][5])
+        finally:
+            bridge.close()
+
     def test_forearm_guides_elbow_without_displacing_wrist(self):
         m,d,c,_=setup('human');s='right'
         before=d.body(f'{s}_elbow').xpos.copy()

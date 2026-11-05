@@ -1,0 +1,90 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="studio-token" content="{{STUDIO_TOKEN}}">
+  <title>lab3l Studio</title>
+  <link rel="stylesheet" href="/static/app.css">
+  <script type="module" src="/static/app.js"></script>
+</head>
+<body>
+  <header class="top">
+    <h1>lab3l Studio</h1>
+    <span id="counts" class="counts"></span>
+    <button id="settings-link" class="link" type="button" hidden>Session settings</button>
+  </header>
+
+  <section class="session" aria-label="Session">
+    <form id="connect" class="connect" autocomplete="off">
+      <label class="field wide">Tracking Streamer IP or room code
+        <input id="address" spellcheck="false" required>
+      </label>
+      <label class="field">Operator
+        <input id="operator" maxlength="32" spellcheck="false" placeholder="initials">
+      </label>
+      <label class="toggle"><input type="checkbox" id="auto-recenter" checked> Auto-recenter</label>
+      <label class="toggle"><input type="checkbox" id="headset-view" checked> Headset view</label>
+      <label class="toggle"><input type="checkbox" id="grasp-assist"> Grasp assist</label>
+      <button type="submit" id="start" class="primary">Start</button>
+      <p id="form-error" class="error" role="alert"></p>
+    </form>
+
+    <div id="live" class="live" hidden>
+      <div class="chips">
+        <div class="chip grey" id="chip-left"><span class="dot"></span>Left</div>
+        <div class="chip grey" id="chip-right"><span class="dot"></span>Right</div>
+      </div>
+      <ol class="steps" id="steps">
+        <li data-step="reset"><b>①</b> Reset</li>
+        <li data-step="calibrate"><b>②</b> Calibrate</li>
+        <li data-step="record"><b>③</b> Record</li>
+      </ol>
+      <div class="buttons">
+        <button type="button" data-key="H">Reset <kbd>H</kbd></button>
+        <button type="button" data-key="C">Calibrate <kbd>C</kbd></button>
+        <button type="button" data-key="E" id="record" class="record">Record <kbd>E</kbd></button>
+        <button type="button" data-key="X" class="quiet">Discard <kbd>X</kbd></button>
+        <button type="button" id="stop" class="quiet">Stop session</button>
+      </div>
+      <p id="notice" class="notice"></p>
+    </div>
+  </section>
+
+  <main class="main">
+    <section class="result" aria-label="Result">
+      <div id="result-empty" class="empty">Record an attempt. The labeled result plays here.</div>
+      <div id="result-card" hidden>
+        <div class="result-head">
+          <span id="badge" class="badge"></span>
+          <span id="episode-name" class="episode-name"></span>
+          <span id="placement" class="placement"></span>
+          <div class="confidence" title="Labeler confidence">
+            <span>confidence</span>
+            <div class="bar"><div id="confidence-fill"></div></div>
+          </div>
+        </div>
+        <div class="video-wrap">
+          <div class="tabs" role="tablist">
+            <button type="button" role="tab" data-camera="overview" class="active">Overview</button>
+            <button type="button" role="tab" data-camera="operator">Operator</button>
+          </div>
+          <video id="video" muted playsinline controls preload="auto"></video>
+          <div id="timeline" class="timeline" title="Click to seek"></div>
+        </div>
+        <p id="phase-strip" class="phase-strip"></p>
+      </div>
+    </section>
+    <aside class="episodes" aria-label="Episodes">
+      <h2>Episodes</h2>
+      <div id="episode-list" class="episode-list"></div>
+    </aside>
+  </main>
+
+  <footer class="log">
+    <button id="log-toggle" class="link" type="button">Show log</button>
+    <span id="exit-code" class="exit-code"></span>
+    <pre id="log" hidden></pre>
+  </footer>
+</body>
+</html>
