@@ -287,6 +287,10 @@ RECORDING_REQUIRES = "Recording requires --wrist human --workspace"
 CUP_NOT_AT_START = "Not recording: cup is not at its start position. Press H, then C, then E."
 
 
+def not_at_start(name):
+    return CUP_NOT_AT_START.replace("cup", name, 1)
+
+
 def toggle_recording(recorder, data, calibrated=True):
     """E: start an episode, or stop and save it. Returns a notice, if any."""
     if recorder is None:
@@ -295,10 +299,12 @@ def toggle_recording(recorder, data, calibrated=True):
     if recorder.recording:
         recorder.stop(data, "user_stop")
         return None
-    if not recorder.cup_at_start(data):
-        print(CUP_NOT_AT_START, flush=True)
-        recorder.notice = CUP_NOT_AT_START
-        return CUP_NOT_AT_START
+    blocking = recorder.task_ready(data)
+    if blocking:
+        notice = not_at_start(blocking)
+        print(notice, flush=True)
+        recorder.notice = notice
+        return notice
     recorder.start(data)
     print(f"Recording episode {recorder.counter:04d}: E stops and saves, X discards.", flush=True)
     if not calibrated:
@@ -478,7 +484,9 @@ def parse_args():
     recording = parser.add_argument_group("episode recording (--wrist human --workspace only)")
     recording.add_argument("--record-dir", default=None,
                            help="Episode folder (default: data/episodes in the project)")
-    recording.add_argument("--task", default="cup_to_tray", help="Task id stored in metadata")
+    recording.add_argument("--task", default="cup_to_tray",
+                           help="Task id stored in metadata. Scored tasks (workspace_scene.TASKS): "
+                                "cup_to_tray, apple_to_plate, block_to_plate; their props are added")
     recording.add_argument("--operator", default="", help="Optional operator tag, e.g. initials")
     recording.add_argument("--video", action=argparse.BooleanOptionalAction, default=True,
                            help="Render operator/overview camera videos (default: on)")
@@ -508,10 +516,14 @@ def parse_args():
         parser.error("--control-port must be 1-65535")
     if args.control_port is not None and not args.control_token:
         parser.error("--control-port needs --control-token")
+    from workspace_scene import PROPS, task_props
+    if args.props == ["all"]:
+        args.props = list(PROPS)
+    if task_props(args.task):
+        if args.wrist != "human" or not args.workspace:
+            parser.error(f"--task {args.task} needs --wrist human --workspace")
+        args.props += [name for name in task_props(args.task) if name not in args.props]
     if args.props:
-        from workspace_scene import PROPS
-        if args.props == ["all"]:
-            args.props = list(PROPS)
         unknown = sorted(set(args.props) - PROPS.keys())
         if unknown:
             parser.error(f"unknown --props {unknown}; choose from {sorted(PROPS)} or 'all'")

@@ -101,7 +101,7 @@ PROPS = {
                "rgba": (.80, .25, .22, 1)},
     "bottle": {"type": "cylinder", "size": (.03, .08), "xy": (.32, .10), "mass": .15,
                "rgba": (.30, .55, .85, 1)},
-    "plate":  {"type": "cylinder", "size": (.07, .006), "xy": (.23, .18), "mass": .10,
+    "plate":  {"type": "cylinder", "size": (.07, .006), "xy": (.23, .18), "mass": .40,
                "rgba": (.92, .92, .88, 1)},
     "apple":  {"type": "sphere", "size": (.035,), "xy": (.24, .04), "mass": .15,
                "rgba": (.75, .15, .15, 1)},
@@ -145,3 +145,41 @@ def add_props(scene, names):
             geom.meshname = mesh.name
         else:
             geom.size = [*spec["size"], *[0] * (3 - len(spec["size"]))]
+        # Realistic look on top of the unchanged collision shape (prop_visuals.py).
+        from prop_visuals import add_visual
+        add_visual(scene, body, name, spec, geom)
+
+
+# Scored pick-and-place tasks (view_dual_arms.py --task). object: what to move;
+# target: where it must end up, either the fixed "tray" or a free prop
+# ("plate"); upright: whether it must also end upright. The props a task
+# needs are added automatically. Each task is one-handed: the tray is in the
+# right hand's reach and the plate in the left's, not the other way round
+# (test_workspace_props.py checks this). A task not listed here is still
+# recorded and phase-labeled, but its outcome is "not_evaluated".
+TASKS = {
+    "cup_to_tray":    {"object": "cup",   "target": "tray",  "upright": True},
+    "apple_to_plate": {"object": "apple", "target": "plate", "upright": False},
+    "block_to_plate": {"object": "block", "target": "plate", "upright": False},
+}
+# An object counts as on the plate when its centre is this far inside the rim.
+PLATE_MARGIN = .01
+
+
+def task_spec(task):
+    """TASKS entry, or the cup_to_tray spec for an unknown task (old default)."""
+    return TASKS.get(task, TASKS["cup_to_tray"])
+
+
+def task_props(task):
+    """Props (PROPS names) a task needs in the scene."""
+    spec = TASKS.get(task, {})
+    return [name for name in (spec.get("object"), spec.get("target")) if name in PROPS]
+
+
+def object_start(name):
+    return CUP_START.copy() if name == "cup" else prop_start(name)
+
+
+def object_half_height(name):
+    return CUP_HALF_HEIGHT if name == "cup" else prop_half_height(PROPS[name])

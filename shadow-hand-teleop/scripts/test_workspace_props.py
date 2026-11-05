@@ -50,6 +50,41 @@ class PropTests(unittest.TestCase):
             error = np.linalg.norm(self.d.site_xpos[self.c.sites["left"]] - goal)
             self.assertLess(error, .01, name)
 
+    def test_visuals_are_look_only(self):
+        """prop_visuals adds no mass, inertia or contacts; collision shapes are hidden."""
+        from unittest import mock
+        import prop_visuals
+        with mock.patch.dict(prop_visuals.VISUALS, clear=True):
+            plain, _, _, _ = setup("human", workspace=True, props=list(PROPS))
+        for name in PROPS:
+            a, b = self.m.body(name).id, plain.body(name).id
+            self.assertAlmostEqual(self.m.body_mass[a], plain.body_mass[b], places=12)
+            np.testing.assert_allclose(self.m.body_inertia[a], plain.body_inertia[b], rtol=1e-9)
+            np.testing.assert_allclose(self.m.body_ipos[a], plain.body_ipos[b], atol=1e-12)
+            self.assertEqual(self.m.geom(f"{name}_geom").group[0], prop_visuals.COLLISION_GROUP)
+            visual = [g for g in range(self.m.ngeom) if self.m.geom_bodyid[g] == a
+                      and self.m.geom(g).name != f"{name}_geom"]
+            self.assertTrue(visual, name)
+            for g in visual:
+                self.assertEqual((self.m.geom_contype[g], self.m.geom_conaffinity[g]), (0, 0))
+                self.assertEqual(self.m.geom_group[g], prop_visuals.VISUAL_GROUP)
+
+    def test_lathe_surfaces_are_closed(self):
+        """Every edge is shared by exactly two faces, wound in opposite directions."""
+        import prop_visuals as pv
+        for profile in (pv.apple_profile(.035), pv.bottle_profile(.03, .08),
+                        pv.plate_profile(.07, .006), [(.03, 0), (.031, 0), (.031, .01), (.03, .01),
+                                                      (.03, 0)]):
+            _, faces = pv.lathe(profile)
+            edges = {}
+            for face in faces:
+                for i in range(3):
+                    edge = (face[i], face[(i + 1) % 3])
+                    edges[edge] = edges.get(edge, 0) + 1
+            for (a, b), count in edges.items():
+                self.assertEqual(count, 1)
+                self.assertIn((b, a), edges)
+
     def test_unknown_prop_and_props_without_table(self):
         with self.assertRaises(ValueError):
             setup("human", workspace=True, props=["mug"])
