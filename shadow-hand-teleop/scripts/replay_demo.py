@@ -23,7 +23,7 @@ def episode_model(metadata):
     if scene.get("wrist_mode") != "human":
         raise ValueError(f"Unsupported episode wrist mode: {scene.get('wrist_mode')!r}")
     from human_arms import build_human_model
-    model = build_human_model(workspace=bool(scene.get("workspace")))
+    model = build_human_model(workspace=bool(scene.get("workspace")), props=scene.get("props") or ())
     recorded = metadata.get("model", {})
     for kind, count, name in (("joint_names", model.njnt, model.joint),
                               ("actuator_names", model.nu, model.actuator)):

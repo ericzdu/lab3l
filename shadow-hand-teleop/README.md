@@ -264,6 +264,48 @@ validated with live headset input; F is a generic fist, not an automatic
 grasp command. No liquid, breakage or real-material fidelity is modeled.
 Scene dimensions and initial positions live in `scripts/workspace_scene.py`.
 
+Extra free props (block, bottle, plate, apple) sit on the empty left half of the
+table, inside the left hand's reach. They are opt-in, so the default
+cup-and-tray scene and its recorded episodes keep the same joints:
+
+```bash
+./run_human_arms.command --props all          # or: --props block apple
+```
+
+Episodes store the names in `metadata.scene.props`, and replay rebuilds the
+same props. To add one, add an entry to `PROPS` (primitive, or an `.obj`/`.stl`
+in `assets/` with `type: "mesh"`); `scripts/test_workspace_props.py` checks
+that every prop rests on the table and is reachable. The props look like real
+objects (an apple with a stem, a labeled glass bottle, a rimmed ceramic plate, a
+wooden block) via visual-only meshes in `scripts/prop_visuals.py`, built in
+code with no files to download. Physics still uses the simple sphere, cylinder
+and box, hidden in geom group 3 (toggle group 3 in the viewer to see them), so
+the look can change without touching reach, contacts or labels. Every prop gets the cup's
+datasets under its own name (`scene/<prop>_pose`, `contacts/hand_<prop>`,
+`contacts/<prop>_table`, `contacts/<prop>_tray`, `contacts/<prop>_plate`).
+
+**Tasks.** `--task` picks what an episode is scored on (`TASKS` in
+`workspace_scene.py`); the props a task needs are added for you:
+
+| Task | Hand | Success |
+|---|---|---|
+| `cup_to_tray` (default) | right | cup upright in the tray, released, settled |
+| `apple_to_plate` | left | apple on the plate, released, settled |
+| `block_to_plate` | left | block on the plate (any face down), released, settled |
+
+```bash
+./run_human_arms.command --task apple_to_plate
+.venv/bin/python scripts/scripted_prop_to_plate.py --task block_to_plate   # scripted demo
+```
+
+The tray is only within the right hand's reach and the plate only within the
+left's, so each task is one-handed (`scripts/test_prop_tasks.py` checks this).
+The labeler uses the same phases and thresholds for every task; criteria and
+failure reasons name the target (`in_plate`, `not_in_plate`). Before E starts
+an episode, the task's object and the plate must be at their start (press H).
+Palm-down release onto the plate is sensitive: let go a few millimetres above
+it, since opening the fingers while pressing down levers a small object off.
+
 **Scene layout (version 2).** The worktop top is at z = 0.60 m (was 0.505),
 the cup starts at (0.30, −0.27) and the tray is centred at (0.30, −0.09)
 (was (0.32, −0.28) and (0.43, −0.12)); x is forward, y is the robot's left.

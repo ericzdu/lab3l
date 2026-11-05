@@ -1,4 +1,9 @@
-"""Heuristic success and phase labels for recorded cup-to-tray episodes.
+"""Heuristic success and phase labels for recorded pick-and-place episodes.
+
+The task (metadata.task, see workspace_scene.TASKS) names the object being
+moved and its target. Internally the code keeps the original cup-to-tray
+names: "cup" is the task's object and "tray" its target, so cup_to_tray
+episodes label exactly as before.
 
 label_episode() is a pure function of the recorded arrays and metadata: no
 MuJoCo stepping, so it is fast, testable with synthetic data and re-runnable
@@ -16,7 +21,8 @@ from pathlib import Path
 import numpy as np
 
 import workspace_scene
-from workspace_scene import CUP_HALF_HEIGHT, TRAY_HALF_EXTENTS, TRAY_RIM_THICKNESS
+from workspace_scene import (PLATE_MARGIN, PROPS, TASKS, TRAY_HALF_EXTENTS, TRAY_RIM_THICKNESS,
+                             object_half_height, task_spec)
 
 
 LABELER_VERSION = "2"
@@ -56,6 +62,17 @@ NEEDED = ("time/sim", "robot/wrist_pos", "input/fresh", "scene/cup_pose", "scene
           "contacts/cup_tray", "contacts/hand_hand")
 
 
+def needed(metadata):
+    """Datasets label_episode reads for this episode's task (NEEDED for the cup)."""
+    spec = task_spec((metadata or {}).get("task"))
+    obj, target = spec["object"], spec["target"]
+    keys = [key.replace("cup", obj).replace("tray", target) if key.startswith(("scene/", "contacts/"))
+            and key != "contacts/hand_hand" else key for key in NEEDED]
+    if target in PROPS:
+        keys.append(f"scene/{target}_pose")   # a free target (plate) can move
+    return keys
+
+
 def scene_geometry(metadata):
     """Prop positions an episode was recorded with, from metadata.scene.
 
@@ -89,8 +106,8 @@ def load_episode(path):
     with h5py.File(episode_path(path), "r") as file:
         if file.attrs.get("schema") != "lab3l.episode":
             raise ValueError(f"{path} is not a lab3l.episode file")
-        arrays = {name: file[name][...] for name in NEEDED}
         metadata = json.loads(file.attrs["metadata"])
+        arrays = {name: file[name][...] for name in needed(metadata)}
     return arrays, metadata
 
 
@@ -177,38 +194,49 @@ class Signals:
     """Raw and debounced per-sample signals derived from recorded arrays."""
     def __init__(self, arrays, metadata, cfg):
         self.cfg = cfg
+        spec = self.spec = task_spec(metadata.get("task"))
+        obj, target = self.object, self.target = spec["object"], spec["target"]
         t = self.t = np.asarray(arrays["time/sim"], dtype=float)
         self.n = len(t)
-        hand_cup = np.asarray(arrays["contacts/hand_cup"], dtype=bool)
-        arm_cup = np.asarray(arrays["contacts/arm_cup"], dtype=bool)
+        hand_cup = np.asarray(arrays[f"contacts/hand_{obj}"], dtype=bool)
+        arm_cup = np.asarray(arrays[f"contacts/arm_{obj}"], dtype=bool)
         d = lambda raw: debounce(raw, t, cfg.debounce)
         self.touch_raw = hand_cup.any(axis=2) | arm_cup
         self.touch = np.column_stack([d(self.touch_raw[:, s]) for s in range(2)])
         self.opposition_raw = hand_cup[:, :, 0] & hand_cup[:, :, 1:6].any(axis=2)
         self.opposition = np.column_stack([d(self.opposition_raw[:, s]) for s in range(2)])
-        self.table_raw = np.asarray(arrays["contacts/cup_table"], dtype=bool)
-        self.tray_raw = np.asarray(arrays["contacts/cup_tray"], dtype=bool)
+        self.table_raw = np.asarray(arrays[f"contacts/{obj}_table"], dtype=bool)
+        self.tray_raw = np.asarray(arrays[f"contacts/{obj}_{target}"], dtype=bool)
         self.table, self.tray = d(self.table_raw), d(self.tray_raw)
         self.supported_raw = self.table_raw | self.tray_raw
         self.supported = d(self.supported_raw)
-        pose = np.asarray(arrays["scene/cup_pose"], dtype=float)
+        pose = np.asarray(arrays[f"scene/{obj}_pose"], dtype=float)
         self.cup = pose[:, :3]
         scene = scene_geometry(metadata)
-        rest = scene["table_top"] + CUP_HALF_HEIGHT
+        rest = scene["table_top"] + object_half_height(obj)
         self.height = self.cup[:, 2] - rest
         self.lifted_raw = ~self.supported_raw & (self.height > cfg.lift_height)
         self.lifted = d(self.lifted_raw)
         self.tilt = tilt_degrees(pose[:, 3:7])
         self.tipped = d(self.tilt > cfg.tip_over_deg)
-        self.lin_speed = np.linalg.norm(np.asarray(arrays["scene/cup_linvel"], dtype=float), axis=1)
-        self.ang_speed = np.linalg.norm(np.asarray(arrays["scene/cup_angvel"], dtype=float), axis=1)
-        self.h_speed = np.linalg.norm(np.asarray(arrays["scene/cup_linvel"], dtype=float)[:, :2], axis=1)
+        linvel = np.asarray(arrays[f"scene/{obj}_linvel"], dtype=float)
+        self.lin_speed = np.linalg.norm(linvel, axis=1)
+        self.ang_speed = np.linalg.norm(np.asarray(arrays[f"scene/{obj}_angvel"], dtype=float), axis=1)
+        self.h_speed = np.linalg.norm(linvel[:, :2], axis=1)
         self.hand_hand = d(np.asarray(arrays["contacts/hand_hand"], dtype=bool))
         self.wrist = np.asarray(arrays["robot/wrist_pos"], dtype=float)
         self.fresh = np.asarray(arrays["input/fresh"], dtype=bool)
         self.live = metadata.get("source") == "live"
-        self.tray_offset = np.abs(self.cup[:, :2] - scene["tray_center"])
-        self.tray_bounds = np.asarray(TRAY_HALF_EXTENTS) - TRAY_RIM_THICKNESS
+        if target == "tray":
+            self.tray_offset = np.abs(self.cup[:, :2] - scene["tray_center"])
+            self.tray_bounds = np.asarray(TRAY_HALF_EXTENTS) - TRAY_RIM_THICKNESS
+        else:
+            # Round free target: radial distance from its recorded centre,
+            # duplicated so the tray's per-axis (x, y) checks apply unchanged.
+            center = np.asarray(arrays[f"scene/{target}_pose"], dtype=float)[:, :2]
+            radial = np.linalg.norm(self.cup[:, :2] - center, axis=1)
+            self.tray_offset = np.column_stack([radial, radial])
+            self.tray_bounds = np.full(2, PROPS[target]["size"][0] - PLATE_MARGIN)
 
     def window(self, start, seconds):
         """Sample indices in [t[start], t[start] + seconds]."""
@@ -446,7 +474,7 @@ def label_events(sig, transitions, drops, active, phase):
     for i in rising(sig.lifted):
         add(i, "lift_off", SIDES[active])
     for i in rising(sig.tray):
-        add(i, "tray_contact")
+        add(i, f"{sig.target}_contact")
     for drop in drops:
         add(drop["sample"], "drop", None, fall=drop["fall"], landed=drop["landed"])
     for i in rising(sig.tipped):
@@ -472,7 +500,13 @@ def label_events(sig, transitions, drops, active, phase):
 
 
 # -- outcome ------------------------------------------------------------------------
+def renamed(name, sig):
+    """Criterion / failure-reason name with the task's object and target in it."""
+    return name.replace("tray", sig.target) if sig.target != "tray" else name
+
+
 def cup_to_tray_outcome(sig, active, drops, segments):
+    """Outcome for any TASKS entry ("cup"/"tray" = the task's object/target)."""
     cfg = sig.cfg
     duration = float(sig.t[-1] - sig.t[0]) if sig.n else 0.
     window = np.flatnonzero(sig.t >= sig.t[-1] - cfg.settle_window - 1e-9) if sig.n else np.array([], int)
@@ -486,12 +520,15 @@ def cup_to_tray_outcome(sig, active, drops, segments):
                         and sig.ang_speed[window].max() < cfg.settle_ang_speed),
         "lifted_at_least_once": bool(sig.lifted.any()),
     }
+    if not sig.spec["upright"]:
+        del criteria["upright"]   # e.g. an apple or block: any side down is fine
     long_enough = duration >= max(cfg.min_duration, cfg.settle_window)
     margins = {"released": 1.}
     if len(window):
         bounds = np.asarray(sig.tray_bounds)
         margins["in_tray"] = float(np.min(np.abs(bounds - sig.tray_offset[window]) / bounds).clip(0, 1))
-        margins["upright"] = float(ratio_margin(sig.tilt[window].max(), cfg.upright_max_deg))
+        if "upright" in criteria:
+            margins["upright"] = float(ratio_margin(sig.tilt[window].max(), cfg.upright_max_deg))
         margins["settled"] = float(min(ratio_margin(sig.lin_speed[window].max(), cfg.settle_lin_speed),
                                        ratio_margin(sig.ang_speed[window].max(), cfg.settle_ang_speed)))
     margins["lifted_at_least_once"] = float(ratio_margin(np.max(sig.height, initial=0.), cfg.lift_height))
@@ -503,13 +540,13 @@ def cup_to_tray_outcome(sig, active, drops, segments):
             "never_touched": not sig.touch.any(),
             "never_lifted": not criteria["lifted_at_least_once"],
             "dropped_outside_tray": dropped_outside and not criteria["in_tray"],
-            "tipped_over": not criteria["upright"],
+            "tipped_over": not criteria.get("upright", True),
             "not_in_tray": not criteria["in_tray"],
             "not_released": not criteria["released"],
             "not_settled": not criteria["settled"],
             "too_short": not long_enough,
         }
-        reason = next(name for name in FAILURE_ORDER if failing[name])
+        reason = renamed(next(name for name in FAILURE_ORDER if failing[name]), sig)
     fresh = sig.fresh_fraction(window, active)
     regrasps = max(0, sum(1 for segment in segments if segment["phase"] == "grasp") - 1)
     releases = [segment for segment in segments if segment["phase"] == "release"]
@@ -525,7 +562,9 @@ def cup_to_tray_outcome(sig, active, drops, segments):
         longest = max(longest, float(sig.t[min(end, sig.n - 1)] - sig.t[start]))
     return {
         "outcome": "success" if success else "failure", "success": success,
-        "failure_reason": reason, "criteria": criteria, "margins": margins,
+        "failure_reason": reason,
+        "criteria": {renamed(key, sig): value for key, value in criteria.items()},
+        "margins": {renamed(key, sig): value for key, value in margins.items()},
         "confidence": float(np.clip(min(margins.values()) * fresh, 0, 1)),
         "settle_fresh_frac": float(fresh), "duration_s": duration,
         "active_side": SIDES[active], "bimanual": longest > cfg.bimanual_min,
@@ -544,7 +583,7 @@ def label_episode(arrays, metadata, cfg=LabelConfig()):
     phase, transitions, _ = segment_phases(sig, active, drops)
     segments = build_segments(sig, phase, transitions, active)
     events = label_events(sig, transitions, drops, active, phase)
-    if metadata.get("task") == "cup_to_tray":
+    if metadata.get("task") in TASKS:
         outcome = cup_to_tray_outcome(sig, active, drops, segments)
     else:
         outcome = {"outcome": "not_evaluated", "success": None, "failure_reason": None,

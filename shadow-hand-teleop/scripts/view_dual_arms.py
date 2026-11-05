@@ -23,10 +23,10 @@ from arm_control import (ArmController, SIDES, WristMapper, build_arm_model,
 from hand_retargeting import actuator_indices, apply_targets
 
 
-def setup(wrist_mode="spherical", workspace=False):
+def setup(wrist_mode="spherical", workspace=False, props=()):
     if wrist_mode == "human":
         from human_arms import HumanArmController, build_human_model
-        model = build_human_model(workspace=workspace)
+        model = build_human_model(workspace=workspace, props=props)
         controller_type = HumanArmController
     elif wrist_mode == "spherical":
         from spherical_wrist import SphericalArmController, build_spherical_model
@@ -287,6 +287,10 @@ RECORDING_REQUIRES = "Recording requires --wrist human --workspace"
 CUP_NOT_AT_START = "Not recording: cup is not at its start position. Press H, then C, then E."
 
 
+def not_at_start(name):
+    return CUP_NOT_AT_START.replace("cup", name, 1)
+
+
 def toggle_recording(recorder, data, calibrated=True):
     """E: start an episode, or stop and save it. Returns a notice, if any."""
     if recorder is None:
@@ -295,10 +299,12 @@ def toggle_recording(recorder, data, calibrated=True):
     if recorder.recording:
         recorder.stop(data, "user_stop")
         return None
-    if not recorder.cup_at_start(data):
-        print(CUP_NOT_AT_START, flush=True)
-        recorder.notice = CUP_NOT_AT_START
-        return CUP_NOT_AT_START
+    blocking = recorder.task_ready(data)
+    if blocking:
+        notice = not_at_start(blocking)
+        print(notice, flush=True)
+        recorder.notice = notice
+        return notice
     recorder.start(data)
     print(f"Recording episode {recorder.counter:04d}: E stops and saves, X discards.", flush=True)
     if not calibrated:
@@ -436,6 +442,9 @@ def parse_args():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--address", help="Current Tracking Streamer IP or remote room code")
     parser.add_argument("--workspace", action="store_true", help="Table, movable cup and fixed tray (human arms)")
+    parser.add_argument("--props", nargs="+", default=[], metavar="NAME",
+                        help="Extra free props on the table (needs --wrist human --workspace): "
+                             "names from workspace_scene.PROPS, or 'all'")
     parser.add_argument("--scale", type=float, default=0.6, help="Robot travel / human wrist travel (default 0.6)")
     parser.add_argument("--wrist", choices=("spherical", "panda", "human"), default="spherical",
                         help="Simplified ball-joint wrists (default), or previous Panda assembly")
@@ -475,7 +484,9 @@ def parse_args():
     recording = parser.add_argument_group("episode recording (--wrist human --workspace only)")
     recording.add_argument("--record-dir", default=None,
                            help="Episode folder (default: data/episodes in the project)")
-    recording.add_argument("--task", default="cup_to_tray", help="Task id stored in metadata")
+    recording.add_argument("--task", default="cup_to_tray",
+                           help="Task id stored in metadata. Scored tasks (workspace_scene.TASKS): "
+                                "cup_to_tray, apple_to_plate, block_to_plate; their props are added")
     recording.add_argument("--operator", default="", help="Optional operator tag, e.g. initials")
     recording.add_argument("--video", action=argparse.BooleanOptionalAction, default=True,
                            help="Render operator/overview camera videos (default: on)")
@@ -505,6 +516,19 @@ def parse_args():
         parser.error("--control-port must be 1-65535")
     if args.control_port is not None and not args.control_token:
         parser.error("--control-port needs --control-token")
+    from workspace_scene import PROPS, task_props
+    if args.props == ["all"]:
+        args.props = list(PROPS)
+    if task_props(args.task):
+        if args.wrist != "human" or not args.workspace:
+            parser.error(f"--task {args.task} needs --wrist human --workspace")
+        args.props += [name for name in task_props(args.task) if name not in args.props]
+    if args.props:
+        unknown = sorted(set(args.props) - PROPS.keys())
+        if unknown:
+            parser.error(f"unknown --props {unknown}; choose from {sorted(PROPS)} or 'all'")
+        if args.wrist != "human" or not args.workspace:
+            parser.error("--props needs --wrist human --workspace")
     if args.grasp_assist and not args.workspace:
         parser.error("--grasp-assist needs the cup (--workspace)")
     if args.auto_recenter and not args.address:
@@ -524,7 +548,7 @@ def parse_args():
 def main():
     args = parse_args()
     mapper = WristMapper(args.scale)
-    model, data, controller, hands = setup(args.wrist, workspace=args.workspace)
+    model, data, controller, hands = setup(args.wrist, workspace=args.workspace, props=args.props)
     finger_motion=FingerTransition(model) if not args.address else None
     assist = None
     if args.grasp_assist:
@@ -578,7 +602,7 @@ def main():
             record_dir=args.record_dir or DEFAULT_RECORD_DIR, task=args.task,
             operator=args.operator,
             source="live" if bridge else "scripted_demo" if args.demo else "keyboard",
-            wrist_mode=args.wrist, workspace=args.workspace, scale=args.scale,
+            wrist_mode=args.wrist, workspace=args.workspace, props=args.props, scale=args.scale,
             video=args.video, video_fps=args.video_fps, video_size=args.video_size,
             max_seconds=args.max_episode_seconds, auto_label=not args.no_auto_label,
             assist=assist)

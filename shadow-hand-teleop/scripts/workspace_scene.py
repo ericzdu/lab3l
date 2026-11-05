@@ -1,4 +1,6 @@
 """Procedural tabletop props. All distances are metres; mass is kilograms."""
+from pathlib import Path
+
 import mujoco
 import numpy as np
 
@@ -78,3 +80,106 @@ def add_workspace(scene):
             scene.add_equality(name=f"{side}_grasp_assist", type=mujoco.mjtEq.mjEQ_WELD,
                 objtype=mujoco.mjtObj.mjOBJ_BODY, name1=palm, name2="cup", active=False,
                 data=[0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 1])
+
+
+# Optional free props (view_dual_arms.py --props). They are NOT part of the
+# default scene: each adds a free joint, and replay requires the recorded joint
+# list to match, so cup_to_tray episodes keep replaying unchanged. Episodes
+# store the chosen names in metadata.scene.props and replay rebuilds with them,
+# so SCENE_VERSION does not change when a prop is added here.
+# Keys: type (box/sphere/cylinder/capsule/mesh), size (MuJoCo half-sizes),
+# xy (spawn on the worktop, it rests at TABLE_TOP + half height), mass, rgba.
+# The left half of the table is free and inside the left hand's reach
+# (HumanArmController clips wrist targets to home +/- 16 cm in x); the worktop's
+# front edge is x = 0.16, so keep a prop's footprint behind it.
+# Mesh props: put an .obj/.stl in shadow-hand-teleop/assets/ and use
+# type "mesh", mesh "<file>", half_height (for the spawn z), optional scale.
+# MuJoCo collides with the mesh's convex hull, so hollow shapes fill in.
+PROPS_DIR = Path(__file__).resolve().parents[1] / "assets"
+PROPS = {
+    "block":  {"type": "box", "size": (.025, .025, .025), "xy": (.30, .27), "mass": .05,
+               "rgba": (.80, .25, .22, 1)},
+    "bottle": {"type": "cylinder", "size": (.03, .08), "xy": (.32, .10), "mass": .15,
+               "rgba": (.30, .55, .85, 1)},
+    "plate":  {"type": "cylinder", "size": (.07, .006), "xy": (.23, .18), "mass": .40,
+               "rgba": (.92, .92, .88, 1)},
+    "apple":  {"type": "sphere", "size": (.035,), "xy": (.24, .04), "mass": .15,
+               "rgba": (.75, .15, .15, 1)},
+}
+_PROP_GEOMS = {"box": mujoco.mjtGeom.mjGEOM_BOX, "sphere": mujoco.mjtGeom.mjGEOM_SPHERE,
+               "cylinder": mujoco.mjtGeom.mjGEOM_CYLINDER,
+               "capsule": mujoco.mjtGeom.mjGEOM_CAPSULE, "mesh": mujoco.mjtGeom.mjGEOM_MESH}
+# Same contact model as the cup. Rolling friction (condim 6) keeps the apple
+# from rolling off the table on its own.
+PROP_FRICTION = [1, .005, .001]
+
+
+def prop_half_height(spec):
+    if spec["type"] == "mesh":
+        return spec["half_height"]
+    size = spec["size"]
+    return {"box": lambda: size[2], "sphere": lambda: size[0], "cylinder": lambda: size[1],
+            "capsule": lambda: size[0] + size[1]}[spec["type"]]()
+
+
+def prop_start(name):
+    spec = PROPS[name]
+    return np.array([*spec["xy"], TABLE_TOP + prop_half_height(spec)])
+
+
+def add_props(scene, names):
+    """Add the named PROPS as free bodies, in PROPS order (stable joint order)."""
+    unknown = sorted(set(names) - PROPS.keys())
+    if unknown:
+        raise ValueError(f"Unknown prop(s) {unknown}; choose from {sorted(PROPS)}")
+    for name in (n for n in PROPS if n in names):
+        spec = PROPS[name]
+        body = scene.worldbody.add_body(name=name, pos=prop_start(name))
+        body.add_freejoint(name=f"{name}_free")
+        geom = body.add_geom(name=f"{name}_geom", type=_PROP_GEOMS[spec["type"]],
+            rgba=list(spec["rgba"]), mass=spec["mass"], friction=PROP_FRICTION,
+            condim=6 if spec["type"] == "sphere" else CUP_CONDIM)
+        if spec["type"] == "mesh":
+            mesh = scene.add_mesh(name=f"{name}_mesh", file=str(PROPS_DIR / spec["mesh"]),
+                                  scale=list(spec.get("scale", (1, 1, 1))))
+            geom.meshname = mesh.name
+        else:
+            geom.size = [*spec["size"], *[0] * (3 - len(spec["size"]))]
+        # Realistic look on top of the unchanged collision shape (prop_visuals.py).
+        from prop_visuals import add_visual
+        add_visual(scene, body, name, spec, geom)
+
+
+# Scored pick-and-place tasks (view_dual_arms.py --task). object: what to move;
+# target: where it must end up, either the fixed "tray" or a free prop
+# ("plate"); upright: whether it must also end upright. The props a task
+# needs are added automatically. Each task is one-handed: the tray is in the
+# right hand's reach and the plate in the left's, not the other way round
+# (test_workspace_props.py checks this). A task not listed here is still
+# recorded and phase-labeled, but its outcome is "not_evaluated".
+TASKS = {
+    "cup_to_tray":    {"object": "cup",   "target": "tray",  "upright": True},
+    "apple_to_plate": {"object": "apple", "target": "plate", "upright": False},
+    "block_to_plate": {"object": "block", "target": "plate", "upright": False},
+}
+# An object counts as on the plate when its centre is this far inside the rim.
+PLATE_MARGIN = .01
+
+
+def task_spec(task):
+    """TASKS entry, or the cup_to_tray spec for an unknown task (old default)."""
+    return TASKS.get(task, TASKS["cup_to_tray"])
+
+
+def task_props(task):
+    """Props (PROPS names) a task needs in the scene."""
+    spec = TASKS.get(task, {})
+    return [name for name in (spec.get("object"), spec.get("target")) if name in PROPS]
+
+
+def object_start(name):
+    return CUP_START.copy() if name == "cup" else prop_start(name)
+
+
+def object_half_height(name):
+    return CUP_HALF_HEIGHT if name == "cup" else prop_half_height(PROPS[name])
