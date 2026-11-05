@@ -224,7 +224,7 @@ class EpisodeRecorder:
     """
     def __init__(self, model, controller, hands, *, record_dir=DEFAULT_RECORD_DIR,
                  task="cup_to_tray", operator="", source="keyboard", wrist_mode="human",
-                 workspace=True, scale=0.6, video=True, video_fps=30, video_size=(640, 480),
+                 workspace=True, props=(), scale=0.6, video=True, video_fps=30, video_size=(640, 480),
                  max_seconds=120.0, auto_label=True, assist=None, min_reset_seconds=3.0):
         if source not in SOURCES:
             raise ValueError(f"source must be one of {SOURCES}")
@@ -243,6 +243,7 @@ class EpisodeRecorder:
         self.record_dir = Path(record_dir)
         self.task, self.operator, self.source = task, operator, source
         self.wrist_mode, self.workspace, self.scale = wrist_mode, workspace, scale
+        self.props = tuple(props)
         self.video = None
         if video:
             from episode_video import EpisodeVideo
@@ -429,6 +430,7 @@ class EpisodeRecorder:
             "end_reason": end_reason,
             "scene": {"scene_version": SCENE_VERSION,
                       "wrist_mode": self.wrist_mode, "workspace": self.workspace,
+                      "props": list(self.props),
                       "scale": self.scale, "cup_start": CUP_START,
                       "tray_center": TRAY_CENTER, "table_top": TABLE_TOP},
             "model": {"nq": model.nq, "nv": model.nv, "nu": model.nu,

@@ -23,10 +23,10 @@ from arm_control import (ArmController, SIDES, WristMapper, build_arm_model,
 from hand_retargeting import actuator_indices, apply_targets
 
 
-def setup(wrist_mode="spherical", workspace=False):
+def setup(wrist_mode="spherical", workspace=False, props=()):
     if wrist_mode == "human":
         from human_arms import HumanArmController, build_human_model
-        model = build_human_model(workspace=workspace)
+        model = build_human_model(workspace=workspace, props=props)
         controller_type = HumanArmController
     elif wrist_mode == "spherical":
         from spherical_wrist import SphericalArmController, build_spherical_model
@@ -436,6 +436,9 @@ def parse_args():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--address", help="Current Tracking Streamer IP or remote room code")
     parser.add_argument("--workspace", action="store_true", help="Table, movable cup and fixed tray (human arms)")
+    parser.add_argument("--props", nargs="+", default=[], metavar="NAME",
+                        help="Extra free props on the table (needs --wrist human --workspace): "
+                             "names from workspace_scene.PROPS, or 'all'")
     parser.add_argument("--scale", type=float, default=0.6, help="Robot travel / human wrist travel (default 0.6)")
     parser.add_argument("--wrist", choices=("spherical", "panda", "human"), default="spherical",
                         help="Simplified ball-joint wrists (default), or previous Panda assembly")
@@ -505,6 +508,15 @@ def parse_args():
         parser.error("--control-port must be 1-65535")
     if args.control_port is not None and not args.control_token:
         parser.error("--control-port needs --control-token")
+    if args.props:
+        from workspace_scene import PROPS
+        if args.props == ["all"]:
+            args.props = list(PROPS)
+        unknown = sorted(set(args.props) - PROPS.keys())
+        if unknown:
+            parser.error(f"unknown --props {unknown}; choose from {sorted(PROPS)} or 'all'")
+        if args.wrist != "human" or not args.workspace:
+            parser.error("--props needs --wrist human --workspace")
     if args.grasp_assist and not args.workspace:
         parser.error("--grasp-assist needs the cup (--workspace)")
     if args.auto_recenter and not args.address:
@@ -524,7 +536,7 @@ def parse_args():
 def main():
     args = parse_args()
     mapper = WristMapper(args.scale)
-    model, data, controller, hands = setup(args.wrist, workspace=args.workspace)
+    model, data, controller, hands = setup(args.wrist, workspace=args.workspace, props=args.props)
     finger_motion=FingerTransition(model) if not args.address else None
     assist = None
     if args.grasp_assist:
@@ -578,7 +590,7 @@ def main():
             record_dir=args.record_dir or DEFAULT_RECORD_DIR, task=args.task,
             operator=args.operator,
             source="live" if bridge else "scripted_demo" if args.demo else "keyboard",
-            wrist_mode=args.wrist, workspace=args.workspace, scale=args.scale,
+            wrist_mode=args.wrist, workspace=args.workspace, props=args.props, scale=args.scale,
             video=args.video, video_fps=args.video_fps, video_size=args.video_size,
             max_seconds=args.max_episode_seconds, auto_label=not args.no_auto_label,
             assist=assist)

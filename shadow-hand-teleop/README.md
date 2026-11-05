@@ -264,6 +264,20 @@ validated with live headset input; F is a generic fist, not an automatic
 grasp command. No liquid, breakage or real-material fidelity is modeled.
 Scene dimensions and initial positions live in `scripts/workspace_scene.py`.
 
+Extra free props (block, bottle, plate, apple) sit on the empty left half of the
+table, inside the left hand's reach. They are opt-in, so the default
+cup-and-tray scene and its recorded episodes keep the same joints:
+
+```bash
+./run_human_arms.command --props all          # or: --props block apple
+```
+
+Episodes store the names in `metadata.scene.props`, and replay rebuilds the
+same props. To add one, add an entry to `PROPS` (primitive, or an `.obj`/`.stl`
+in `assets/` with `type: "mesh"`); `scripts/test_workspace_props.py` checks
+that every prop rests on the table and is reachable. The recorder's contact and
+phase labels still track only the cup.
+
 **Scene layout (version 2).** The worktop top is at z = 0.60 m (was 0.505),
 the cup starts at (0.30, −0.27) and the tray is centred at (0.30, −0.09)
 (was (0.32, −0.28) and (0.43, −0.12)); x is forward, y is the robot's left.
