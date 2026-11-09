@@ -138,24 +138,29 @@ def add_plate(scene, body, spec):
                                shininess=.8, reflectance=.05))
 
 
-def add_block(scene, body, spec):
+def add_block(scene, body, spec, name="block", inset_rgba=(.62, .16, .12, 1)):
     # A wooden toy block: same box, wood colour, with a darker inset on each
     # side face so its orientation reads in video.
     size = np.asarray(spec["size"], dtype=float)
-    _visual(body, "block_wood", type=mujoco.mjtGeom.mjGEOM_BOX, size=list(size),
-            material=_material(scene, "block_wood", (.78, .58, .34, 1), specular=.15))
-    inset = _material(scene, "block_inset", (.62, .16, .12, 1), specular=.15)
+    _visual(body, f"{name}_wood", type=mujoco.mjtGeom.mjGEOM_BOX, size=list(size),
+            material=_material(scene, f"{name}_wood", (.78, .58, .34, 1), specular=.15))
+    inset = _material(scene, f"{name}_inset", inset_rgba, specular=.15)
     for axis in (0, 1):
         for sign in (-1, 1):
             pos = [0., 0., 0.]
             pos[axis] = sign * size[axis]
             half = list(size * .62)
             half[axis] = .0006
-            _visual(body, f"block_inset_{axis}_{'np'[sign > 0]}", type=mujoco.mjtGeom.mjGEOM_BOX,
+            _visual(body, f"{name}_inset_{axis}_{'np'[sign > 0]}", type=mujoco.mjtGeom.mjGEOM_BOX,
                     size=half, pos=pos, material=inset)
 
 
-VISUALS = {"apple": add_apple, "bottle": add_bottle, "plate": add_plate, "block": add_block}
+def add_big_block(scene, body, spec):
+    add_block(scene, body, spec, "big_block", inset_rgba=(.16, .32, .62, 1))
+
+
+VISUALS = {"apple": add_apple, "bottle": add_bottle, "plate": add_plate, "block": add_block,
+           "big_block": add_big_block}
 
 
 def add_visual(scene, body, name, spec, collision):

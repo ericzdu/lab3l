@@ -3,7 +3,8 @@
 The task (metadata.task, see workspace_scene.TASKS) names the object being
 moved and its target. Internally the code keeps the original cup-to-tray
 names: "cup" is the task's object and "tray" its target, so cup_to_tray
-episodes label exactly as before.
+episodes label exactly as before. A task with steps (set_the_table) is split
+into one stretch per step, each labeled as that single task; see label_steps.
 
 label_episode() is a pure function of the recorded arrays and metadata: no
 MuJoCo stepping, so it is fast, testable with synthetic data and re-runnable
@@ -21,8 +22,8 @@ from pathlib import Path
 import numpy as np
 
 import workspace_scene
-from workspace_scene import (PLATE_MARGIN, PROPS, TASKS, TRAY_HALF_EXTENTS, TRAY_RIM_THICKNESS,
-                             object_half_height, task_spec)
+from workspace_scene import (PLATE_MARGIN, PROPS, STACK_MARGIN, TASKS, TRAY_HALF_EXTENTS,
+                             TRAY_RIM_THICKNESS, object_half_height, task_spec, task_steps)
 
 
 LABELER_VERSION = "2"
@@ -64,7 +65,13 @@ NEEDED = ("time/sim", "robot/wrist_pos", "input/fresh", "scene/cup_pose", "scene
 
 def needed(metadata):
     """Datasets label_episode reads for this episode's task (NEEDED for the cup)."""
-    spec = task_spec((metadata or {}).get("task"))
+    task = (metadata or {}).get("task")
+    if len(task_steps(task)) > 1:
+        keys = []
+        for step in task_steps(task):
+            keys += [key for key in needed({**metadata, "task": step}) if key not in keys]
+        return keys
+    spec = task_spec(task)
     obj, target = spec["object"], spec["target"]
     keys = [key.replace("cup", obj).replace("tray", target) if key.startswith(("scene/", "contacts/"))
             and key != "contacts/hand_hand" else key for key in NEEDED]
@@ -230,6 +237,15 @@ class Signals:
         if target == "tray":
             self.tray_offset = np.abs(self.cup[:, :2] - scene["tray_center"])
             self.tray_bounds = np.asarray(TRAY_HALF_EXTENTS) - TRAY_RIM_THICKNESS
+        elif PROPS[target]["type"] == "box":
+            # Block target: offset in the block's own (yawed) frame, inside its top face.
+            pose = np.asarray(arrays[f"scene/{target}_pose"], dtype=float)
+            w, x, y, z = pose[:, 3:7].T
+            yaw = np.arctan2(2 * (w * z + x * y), 1 - 2 * (y * y + z * z))
+            dx, dy = (self.cup[:, :2] - pose[:, :2]).T
+            c, s = np.cos(yaw), np.sin(yaw)
+            self.tray_offset = np.abs(np.column_stack([c * dx + s * dy, -s * dx + c * dy]))
+            self.tray_bounds = np.asarray(PROPS[target]["size"][:2]) - STACK_MARGIN
         else:
             # Round free target: radial distance from its recorded centre,
             # duplicated so the tray's per-axis (x, y) checks apply unchanged.
@@ -574,6 +590,8 @@ def cup_to_tray_outcome(sig, active, drops, segments):
 
 def label_episode(arrays, metadata, cfg=LabelConfig()):
     """Phase labels, events and outcome for one episode (pure; no file I/O)."""
+    if len(task_steps(metadata.get("task"))) > 1:
+        return label_steps(arrays, metadata, cfg)
     sig = Signals(arrays, metadata, cfg)
     if sig.n < 2:
         raise ValueError("Episode needs at least two samples to label")
@@ -590,6 +608,106 @@ def label_episode(arrays, metadata, cfg=LabelConfig()):
                    "criteria": {}, "confidence": None, "active_side": SIDES[active],
                    "bimanual": None,
                    "regrasp_count": sum(1 for e in events if e["kind"] == "regrasp")}
+    return {
+        "labeler_version": LABELER_VERSION, "config": asdict(cfg),
+        "created_utc": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        "phase": phase, "phase_names": list(PHASES), "segments": segments,
+        "events": events, "outcome": outcome,
+    }
+
+
+def label_steps(arrays, metadata, cfg=LabelConfig()):
+    """Labels for a task with steps, e.g. set_the_table = apple_to_plate, block_to_plate.
+
+    The episode is cut into one stretch per step. The next step is whichever
+    remaining object the hands touch first (so any order works). A step's
+    stretch ends where the next step's reach starts, after its own retreat;
+    each stretch is labeled as that single task, and segments and events get
+    an "object" key. Each step's outcome is judged at the END of the episode
+    (labeled from its stretch's start to the end), so knocking the apple off
+    while placing the block fails the apple step. Success needs every step.
+    """
+    task, steps = metadata.get("task"), task_steps(metadata.get("task"))
+    n = len(arrays["time/sim"])
+    if n < 2:
+        raise ValueError("Episode needs at least two samples to label")
+    touched = {step: np.asarray(arrays[f"contacts/hand_{TASKS[step]['object']}"], bool).any(axis=(1, 2))
+               | np.asarray(arrays[f"contacts/arm_{TASKS[step]['object']}"], bool).any(axis=1)
+               for step in steps}
+
+    def label_from(step, start):
+        sliced = {key: value[start:] for key, value in arrays.items()}
+        return label_episode(sliced, {**metadata, "task": step}, cfg)
+
+    def first_touch(step, start):
+        hits = np.flatnonzero(touched[step][start:])
+        return start + int(hits[0]) if len(hits) else n
+
+    remaining, start, lead = list(steps), 0, 0
+    pieces, outcomes, order = [], {}, []
+    while remaining:
+        step = min(remaining, key=lambda s: (first_touch(s, start), steps.index(s)))
+        remaining.remove(step)
+        order.append(step)
+        labels = label_from(step, start)
+        outcomes[step] = labels["outcome"]
+        end = n
+        if remaining:
+            retreat = np.flatnonzero(labels["phase"] == RETREAT)
+            if len(retreat):
+                handoff = start + int(retreat[0])
+            else:   # never retreated: the next step starts when its object is touched
+                handoff = min(first_touch(s, start) for s in remaining)
+            if handoff < n:
+                nxt = min(remaining, key=lambda s: (first_touch(s, handoff), steps.index(s)))
+                upcoming = label_from(nxt, handoff)["phase"]
+                active = np.flatnonzero(upcoming != IDLE)
+                end = handoff + (int(active[0]) if len(active) else len(upcoming))
+        pieces.append((step, start, max(end, start), labels))
+        start = max(end, start)
+        if start >= n:
+            # Nothing left to label: later steps were never done.
+            for step in remaining:
+                outcomes[step] = label_from(step, max(0, n - 2))["outcome"]
+                order.append(step)
+            remaining = []
+
+    phase = np.zeros(n, dtype=np.int8)
+    segments, events = [], []
+    for step, begin, end, labels in pieces:
+        obj = TASKS[step]["object"]
+        length = end - begin
+        phase[begin:end] = labels["phase"][:length]
+        for segment in labels["segments"]:
+            if segment["start_sample"] >= length:
+                continue
+            segment = {**segment, "object": obj, "step": step,
+                       "start_sample": segment["start_sample"] + begin,
+                       "end_sample": min(segment["end_sample"], length) + begin}
+            segment["end_t"] = float(arrays["time/sim"][min(segment["end_sample"], n - 1)])
+            segments.append(segment)
+        events += [{**event, "object": obj, "step": step, "sample": event["sample"] + begin}
+                   for event in labels["events"] if event["sample"] < length]
+
+    criteria, margins, reason = {}, {}, None
+    for step in steps:
+        obj, outcome = TASKS[step]["object"], outcomes[step]
+        criteria.update({f"{obj}_{key}": value for key, value in outcome["criteria"].items()})
+        margins.update({f"{obj}_{key}": value for key, value in outcome.get("margins", {}).items()})
+        if reason is None and not outcome["success"]:
+            reason = f"{obj}_{outcome['failure_reason']}"
+    success = all(outcomes[step]["success"] for step in steps)
+    sides = [outcomes[step]["active_side"] for step in steps]
+    outcome = {
+        "outcome": "success" if success else "failure", "success": success,
+        "failure_reason": reason, "criteria": criteria, "margins": margins,
+        "confidence": float(min(outcomes[step]["confidence"] for step in steps)),
+        "duration_s": float(arrays["time/sim"][-1] - arrays["time/sim"][0]),
+        "active_side": max(set(sides), key=sides.count),
+        "bimanual": any(outcomes[step]["bimanual"] for step in steps),
+        "regrasp_count": sum(outcomes[step]["regrasp_count"] for step in steps),
+        "order": order, "steps": {step: outcomes[step] for step in steps},
+    }
     return {
         "labeler_version": LABELER_VERSION, "config": asdict(cfg),
         "created_utc": datetime.now(timezone.utc).isoformat(timespec="seconds"),

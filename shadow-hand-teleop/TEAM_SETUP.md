@@ -201,7 +201,7 @@ reproducibility. Post which area you are taking so others can avoid duplication.
 | Headset video window / overlay | `scripts/headset_view.py`, `scripts/bench_headset_view.py` |
 | Cup / tray / tabletop props | `scripts/workspace_scene.py` (bump `SCENE_VERSION` when they move) |
 | Optional extra props (`--props`) | `PROPS` in `scripts/workspace_scene.py` (no version bump; episodes record the names) |
-| Scored tasks (`--task`) | `TASKS` in `scripts/workspace_scene.py`; success rules in `scripts/episode_labels.py` |
+| Scored tasks (`--task`) | `TASKS` in `scripts/workspace_scene.py`; success rules in `scripts/episode_labels.py` (multi-step: `label_steps`) |
 | Reach probe / scripted cup-to-tray | `scripts/check_reach.py`, `scripts/scripted_cup_to_tray.py` |
 | Viewer loop / gradual opening | `scripts/view_dual_arms.py` |
 | Separate controls window | `scripts/control_panel.py` |

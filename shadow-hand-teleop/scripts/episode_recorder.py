@@ -117,7 +117,8 @@ class ContactTables:
     Fails loudly if body/geom names change, rather than silently recording
     all-False contacts. Every object in `objects` (the cup plus any --props)
     gets the same contacts the cup always had: hand groups, arm, grip force,
-    and support by the table, the tray and, when present, the plate.
+    and support by the table, the tray and every other prop (a plate or a
+    block it is stacked on).
     """
     def __init__(self, model, props=()):
         n = model.ngeom
@@ -145,10 +146,8 @@ class ContactTables:
                                            ("worktop/table_leg_*", self.table),
                                            *self.props.items())
                    if not mask.any()]
-        # Supports each prop is checked against (the plate is a task target).
-        self.supports = {"table": self.table, "tray": self.tray}
-        if "plate" in self.props:
-            self.supports["plate"] = self.props["plate"]
+        # Supports each prop is checked against: any prop can be a task target.
+        self.supports = {"table": self.table, "tray": self.tray, **self.props}
         for side in SIDES:
             if not self.arm[side].any():
                 missing.append(f"{side}_shoulder/elbow/wrist")
@@ -224,7 +223,7 @@ def dataset_layout(model, props=()):
         "assist/active": (bool, (2,)),
     }
     # Each prop gets the cup's datasets under its own name (see ContactTables).
-    supports = ["table", "tray"] + (["plate"] if "plate" in props else [])
+    supports = ["table", "tray", *props]
     for name in props:
         layout.update({
             f"scene/{name}_pose": (np.float64, (7,)), f"scene/{name}_linvel": (np.float32, (3,)),
@@ -556,17 +555,17 @@ class EpisodeRecorder:
         body = data.body(name)
         z = body.xmat.reshape(3, 3)[2, 2]
         tilt = np.degrees(np.arccos(np.clip(z, -1, 1)))
-        upright = name == "cup" or any(spec["object"] == name and spec["upright"]
+        upright = name == "cup" or any(spec.get("object") == name and spec.get("upright")
                                        for spec in TASKS.values())
         return bool(np.linalg.norm(body.xpos - object_start(name)) <= max_offset
                     and (tilt <= max_tilt_deg or not upright))
 
     def task_objects(self):
         """Bodies that must be back at their start before an episode of this task."""
-        from workspace_scene import TASKS
-        spec = TASKS.get(self.task)
-        return [spec["object"], *([spec["target"]] if spec["target"] in self.props else [])] \
-            if spec else ["cup"]
+        from workspace_scene import TASKS, task_objects
+        if self.task not in TASKS:
+            return ["cup"]
+        return [name for name in task_objects(self.task) if name == "cup" or name in self.props]
 
     def task_ready(self, data):
         """Name of the first task object not at its start pose, or None if ready."""

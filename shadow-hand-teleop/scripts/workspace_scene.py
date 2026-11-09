@@ -101,10 +101,20 @@ PROPS = {
                "rgba": (.80, .25, .22, 1)},
     "bottle": {"type": "cylinder", "size": (.03, .08), "xy": (.32, .10), "mass": .15,
                "rgba": (.30, .55, .85, 1)},
+    # Round plate whose collision shape is a flat square (collision_box, half
+    # sizes) inside the visual rim's corners. Box-on-cylinder contact in MuJoCo
+    # gets a single contact point, so a block set down on a thin cylinder sank
+    # its corner ~1 cm in and was pushed out hard enough to flip the plate.
+    # Box-on-box contact is exact. Success is still the round area
+    # (radius - PLATE_MARGIN), which the square fully covers.
     "plate":  {"type": "cylinder", "size": (.07, .006), "xy": (.23, .18), "mass": .40,
-               "rgba": (.92, .92, .88, 1)},
+               "rgba": (.92, .92, .88, 1), "collision_box": (.062, .062, .006)},
     "apple":  {"type": "sphere", "size": (.035,), "xy": (.24, .04), "mass": .15,
                "rgba": (.75, .15, .15, 1)},
+    # Base for block_on_big_block: a 7 cm wooden block, heavy enough not to
+    # slide when the small block lands on it.
+    "big_block": {"type": "box", "size": (.035, .035, .035), "xy": (.39, .16), "mass": .20,
+                  "rgba": (.70, .52, .30, 1)},
 }
 _PROP_GEOMS = {"box": mujoco.mjtGeom.mjGEOM_BOX, "sphere": mujoco.mjtGeom.mjGEOM_SPHERE,
                "cylinder": mujoco.mjtGeom.mjGEOM_CYLINDER,
@@ -136,10 +146,13 @@ def add_props(scene, names):
         spec = PROPS[name]
         body = scene.worldbody.add_body(name=name, pos=prop_start(name))
         body.add_freejoint(name=f"{name}_free")
-        geom = body.add_geom(name=f"{name}_geom", type=_PROP_GEOMS[spec["type"]],
+        shape = "box" if "collision_box" in spec else spec["type"]
+        geom = body.add_geom(name=f"{name}_geom", type=_PROP_GEOMS[shape],
             rgba=list(spec["rgba"]), mass=spec["mass"], friction=PROP_FRICTION,
             condim=6 if spec["type"] == "sphere" else CUP_CONDIM)
-        if spec["type"] == "mesh":
+        if "collision_box" in spec:
+            geom.size = list(spec["collision_box"])
+        elif spec["type"] == "mesh":
             mesh = scene.add_mesh(name=f"{name}_mesh", file=str(PROPS_DIR / spec["mesh"]),
                                   scale=list(spec.get("scale", (1, 1, 1))))
             geom.meshname = mesh.name
@@ -154,27 +167,54 @@ def add_props(scene, names):
 # target: where it must end up, either the fixed "tray" or a free prop
 # ("plate"); upright: whether it must also end upright. The props a task
 # needs are added automatically. Each task is one-handed: the tray is in the
-# right hand's reach and the plate in the left's, not the other way round
-# (test_workspace_props.py checks this). A task not listed here is still
-# recorded and phase-labeled, but its outcome is "not_evaluated".
+# right hand's reach, the plate and big block in the left's, not the other way
+# round (test_prop_tasks.py checks this). A task with "steps" is a sequence of
+# the single tasks it names, done in any order and scored on the final state
+# (all must succeed). A task not listed here is still recorded and
+# phase-labeled, but its outcome is "not_evaluated".
 TASKS = {
-    "cup_to_tray":    {"object": "cup",   "target": "tray",  "upright": True},
-    "apple_to_plate": {"object": "apple", "target": "plate", "upright": False},
-    "block_to_plate": {"object": "block", "target": "plate", "upright": False},
+    "cup_to_tray":        {"object": "cup",   "target": "tray",      "upright": True},
+    "apple_to_plate":     {"object": "apple", "target": "plate",     "upright": False},
+    "block_to_plate":     {"object": "block", "target": "plate",     "upright": False},
+    "block_on_big_block": {"object": "block", "target": "big_block", "upright": False},
+    # Both on the plate. The plate is small, so apple on the near half and
+    # block on the far half; placing the block first tends to get it knocked
+    # off by the apple's approach.
+    "set_the_table":      {"steps": ["apple_to_plate", "block_to_plate"]},
 }
-# An object counts as on the plate when its centre is this far inside the rim.
+# An object counts as on the plate when its centre is this far inside the rim,
+# and on a block when its centre is this far inside the block's top face.
 PLATE_MARGIN = .01
+STACK_MARGIN = .01
 
 
 def task_spec(task):
-    """TASKS entry, or the cup_to_tray spec for an unknown task (old default)."""
-    return TASKS.get(task, TASKS["cup_to_tray"])
+    """Single-step TASKS entry, or the cup_to_tray spec for an unknown task (old default)."""
+    spec = TASKS.get(task, TASKS["cup_to_tray"])
+    if "steps" in spec:
+        raise ValueError(f"{task} has steps; use task_steps() and a step's spec")
+    return spec
+
+
+def task_steps(task):
+    """Single-step task names making up `task` ([task] itself if it has no steps)."""
+    return list(TASKS.get(task, {}).get("steps", [task]))
+
+
+def task_objects(task):
+    """Objects and targets a task involves, in order, without duplicates."""
+    names = []
+    for step in task_steps(task):
+        spec = TASKS.get(step, {})
+        for name in (spec.get("object"), spec.get("target")):
+            if name and name not in names:
+                names.append(name)
+    return names
 
 
 def task_props(task):
     """Props (PROPS names) a task needs in the scene."""
-    spec = TASKS.get(task, {})
-    return [name for name in (spec.get("object"), spec.get("target")) if name in PROPS]
+    return [name for name in task_objects(task) if name in PROPS]
 
 
 def object_start(name):

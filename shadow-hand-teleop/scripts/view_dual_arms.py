@@ -486,7 +486,8 @@ def parse_args():
                            help="Episode folder (default: data/episodes in the project)")
     recording.add_argument("--task", default="cup_to_tray",
                            help="Task id stored in metadata. Scored tasks (workspace_scene.TASKS): "
-                                "cup_to_tray, apple_to_plate, block_to_plate; their props are added")
+                                "cup_to_tray, apple_to_plate, block_to_plate, block_on_big_block, "
+                                "set_the_table; their props are added")
     recording.add_argument("--operator", default="", help="Optional operator tag, e.g. initials")
     recording.add_argument("--video", action=argparse.BooleanOptionalAction, default=True,
                            help="Render operator/overview camera videos (default: on)")

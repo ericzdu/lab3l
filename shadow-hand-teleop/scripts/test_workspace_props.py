@@ -42,9 +42,12 @@ class PropTests(unittest.TestCase):
         np.testing.assert_allclose(self.d.qpos[q:q + 3], prop_start("block"))
 
     def test_left_hand_reaches_above_each_prop(self):
+        # The palm-down left hand holds things ~10 cm ahead of its wrist site and
+        # 4 cm toward the thumb (see test_prop_tasks), so the wrist goes there.
+        grasp = np.array([.10, -.04, 0])
         for name in PROPS:
             self.c.reset(self.d)
-            goal = prop_start(name) + [0, 0, prop_half_height(PROPS[name]) + .06]
+            goal = prop_start(name) + [0, 0, prop_half_height(PROPS[name]) + .06] - grasp
             self.c.set_target("left", goal)
             self.step(250)
             error = np.linalg.norm(self.d.site_xpos[self.c.sites["left"]] - goal)
