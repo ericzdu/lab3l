@@ -736,3 +736,14 @@ including when playback speed changes. Smoke collision checks are also exercised
 by `--headless`; the final status reports surface interactions.
 
 Offline smoke checks: `.venv/bin/python scripts/test_smoke_plume.py`.
+
+### Optional photo-derived 3D asset import (experimental)
+
+See [PHOTO_SCENE_SETUP.md](PHOTO_SCENE_SETUP.md) for the separate SAM 3D / other
+mesh-export adapter and `zsh ./run_photo_scene.command`. The included test carton
+is hand-authored, not a reconstruction. Install `requirements-photo-scene.txt`
+for this optional feature; existing launchers keep their current dependencies.
+Generated coffee-machine assets stay local and are not included in this branch.
+Episode recording is disabled only when `--scene-config` is used, until replay
+can reproduce imported meshes. Existing Studio, recorder, headset and task code
+are retained; no integration with those features is claimed by this experiment.

@@ -23,10 +23,12 @@ from arm_control import (ArmController, SIDES, WristMapper, build_arm_model,
 from hand_retargeting import actuator_indices, apply_targets
 
 
-def setup(wrist_mode="spherical", workspace=False):
+def setup(wrist_mode="spherical", workspace=False, scene_config=None):
+    if scene_config is not None and (wrist_mode != "human" or not workspace):
+        raise ValueError("Photo-scene bundles require human arms and the tabletop workspace")
     if wrist_mode == "human":
         from human_arms import HumanArmController, build_human_model
-        model = build_human_model(workspace=workspace)
+        model = build_human_model(workspace=workspace, scene_config=scene_config)
         controller_type = HumanArmController
     elif wrist_mode == "spherical":
         from spherical_wrist import SphericalArmController, build_spherical_model
@@ -436,6 +438,7 @@ def parse_args():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--address", help="Current Tracking Streamer IP or remote room code")
     parser.add_argument("--workspace", action="store_true", help="Table, movable cup and fixed tray (human arms)")
+    parser.add_argument("--scene-config", type=Path, help="Optional local 3D mesh bundle (see PHOTO_SCENE_SETUP.md)")
     parser.add_argument("--scale", type=float, default=0.6, help="Robot travel / human wrist travel (default 0.6)")
     parser.add_argument("--wrist", choices=("spherical", "panda", "human"), default="spherical",
                         help="Simplified ball-joint wrists (default), or previous Panda assembly")
@@ -489,6 +492,8 @@ def parse_args():
     args = parser.parse_args()
     if args.workspace and args.wrist != "human":
         parser.error("--workspace currently requires --wrist human")
+    if args.scene_config and (args.wrist != "human" or not args.workspace):
+        parser.error("--scene-config requires --wrist human --workspace")
     if args.address and (args.headless or args.demo):
         parser.error("Use live tracking or the offline demo, not both")
     if args.seconds < 0 or not np.isfinite(args.seconds):
@@ -524,7 +529,7 @@ def parse_args():
 def main():
     args = parse_args()
     mapper = WristMapper(args.scale)
-    model, data, controller, hands = setup(args.wrist, workspace=args.workspace)
+    model, data, controller, hands = setup(args.wrist, workspace=args.workspace, scene_config=args.scene_config)
     finger_motion=FingerTransition(model) if not args.address else None
     assist = None
     if args.grasp_assist:
@@ -572,7 +577,7 @@ def main():
                                 on_streamer=headset.attach if headset else None)
 
     recorder = None
-    if args.workspace:
+    if args.workspace and not args.scene_config:
         from episode_recorder import DEFAULT_RECORD_DIR, EpisodeRecorder
         recorder = EpisodeRecorder(model, controller, hands,
             record_dir=args.record_dir or DEFAULT_RECORD_DIR, task=args.task,
@@ -587,7 +592,7 @@ def main():
     auto_recenter = AutoRecenter(args.recenter_window) if bridge and args.auto_recenter else None
 
     events = SimpleQueue()
-    selected, paused, overview = "right", False, False
+    selected, paused, overview = "right", False, bool(args.scene_config)
     last_panel_status = None
     status_printer = StatusPrinter()
     workspace_view = args.workspace or args.clean_ui
@@ -599,7 +604,11 @@ def main():
     print("The MuJoCo window keeps its native camera/display shortcuts; robot keys are NOT bound there.", flush=True)
     print("1: select LEFT | 2: select RIGHT | W/S: forward/back | A/D: left/right | R/V: up/down", flush=True)
     print("H: reset home | SPACE: pause/resume", flush=True)
-    print("B: switch operator / overview camera. Default view looks forward over palms-down hands.", flush=True)
+    print("B: switch operator / overview camera. " +
+          ("Imported scene starts in overview." if args.scene_config else
+           "Default view looks forward over palms-down hands."), flush=True)
+    if args.scene_config:
+        print("Mesh-import prototype: recording is disabled; imported scene assets are not yet packaged for episode replay.", flush=True)
     if recorder:
         print("E: start/stop+save an episode | X: discard it. Episodes are simulated robot state.", flush=True)
     if bridge:
@@ -635,7 +644,9 @@ def main():
         with mujoco.viewer.launch_passive(model, data, show_left_ui=not args.clean_ui,
                                           show_right_ui=not args.clean_ui) as viewer:
             with viewer.lock():
-                configure_camera(viewer.cam, workspace=workspace_view)
+                configure_camera(viewer.cam, overview=overview, workspace=workspace_view)
+                if args.scene_config:
+                    viewer.opt.geomgroup[3] = 0
             if not args.no_panel:
                 from control_panel import ControlPanel
                 panel = ControlPanel(events, live=bridge is not None, recording=recorder is not None)

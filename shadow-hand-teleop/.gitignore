@@ -7,3 +7,5 @@ __pycache__/
 *.pyc
 outputs/
 .DS_Store
+# Local reconstructed assets may be large or have separate redistribution terms.
+local_scene_assets/
