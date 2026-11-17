@@ -56,6 +56,7 @@ class Script:
                 self.recorder.event(self.data, kind, **payload)
         if self.recorder is not None and self.recorder.recording:
             self.recorder.sample(self.data, samples={}, fresh={"left": False, "right": False})
+            self.recorder.maybe_render(self.data)   # --video: render due camera frames
         if self.viewer is not None:
             import time
             self.viewer.sync()
