@@ -115,9 +115,12 @@ class ContactTables:
     """Geom -> group lookups for the workspace scene, built once.
 
     Fails loudly if body/geom names change, rather than silently recording
-    all-False contacts.
+    all-False contacts. Every object in `objects` (the cup plus any --props)
+    gets the same contacts the cup always had: hand groups, arm, grip force,
+    and support by the table, the tray and every other prop (a plate or a
+    block it is stacked on).
     """
-    def __init__(self, model):
+    def __init__(self, model, props=()):
         n = model.ngeom
         body_names = [model.body(int(model.geom_bodyid[g])).name for g in range(n)]
         geom_names = [model.geom(g).name for g in range(n)]
@@ -135,12 +138,16 @@ class ContactTables:
                     self.arm[side][g] = True
         self.cup = np.array([body == "cup" for body in body_names])
         self.tray = np.array([body == "tray" for body in body_names])
+        self.props = {name: np.array([body == name for body in body_names]) for name in props}
         self.table = np.array([name == "worktop" or name.startswith("table_leg_")
                                for name in geom_names])
         self.limb = {side: (self.hand_group[side] >= 0) | self.arm[side] for side in SIDES}
         missing = [name for name, mask in (("cup", self.cup), ("tray", self.tray),
-                                           ("worktop/table_leg_*", self.table))
+                                           ("worktop/table_leg_*", self.table),
+                                           *self.props.items())
                    if not mask.any()]
+        # Supports each prop is checked against: any prop can be a task target.
+        self.supports = {"table": self.table, "tray": self.tray, **self.props}
         for side in SIDES:
             if not self.arm[side].any():
                 missing.append(f"{side}_shoulder/elbow/wrist")
@@ -150,39 +157,50 @@ class ContactTables:
         if missing:
             raise ValueError("Workspace scene is missing expected geoms: " + ", ".join(missing))
 
-    def measure(self, model, data):
-        hand_cup = np.zeros((2, len(CONTACT_GROUPS)), dtype=bool)
-        arm_cup = np.zeros(2, dtype=bool)
+    def _object(self, model, data, mask, index, g1, g2):
+        """Hand/arm contact, hand grip force and per-geom pair test for one object."""
+        hand = np.zeros((2, len(CONTACT_GROUPS)), dtype=bool)
+        arm = np.zeros(2, dtype=bool)
         force = np.zeros(2, dtype=np.float32)
-        contacts = data.contact
-        active = contacts.exclude == 0
-        g1, g2 = contacts.geom1[active], contacts.geom2[active]
-        index = np.flatnonzero(active)
-        left, right = self.limb["left"], self.limb["right"]
-        hand_hand = bool(np.any((left[g1] & right[g2]) | (left[g2] & right[g1])))
-        cup_table = bool(np.any((self.cup[g1] & self.table[g2]) | (self.cup[g2] & self.table[g1])))
-        cup_tray = bool(np.any((self.cup[g1] & self.tray[g2]) | (self.cup[g2] & self.tray[g1])))
         wrench = np.zeros(6)
         for i, a, b in zip(index, g1, g2):
-            other = b if self.cup[a] else a if self.cup[b] else None
+            other = b if mask[a] else a if mask[b] else None
             if other is None:
                 continue
             for s, side in enumerate(SIDES):
                 group = self.hand_group[side][other]
                 if group >= 0:
-                    hand_cup[s, group] = True
+                    hand[s, group] = True
                     mujoco.mj_contactForce(model, data, int(i), wrench)
                     force[s] += abs(wrench[0])
-                arm_cup[s] |= bool(self.arm[side][other])
-        return dict(hand_cup=hand_cup, arm_cup=arm_cup, hand_cup_force=force,
-                    cup_table=cup_table, cup_tray=cup_tray, hand_hand=hand_hand,
-                    ncon=np.int32(data.ncon))
+                arm[s] |= bool(self.arm[side][other])
+        return hand, arm, force
+
+    def measure(self, model, data):
+        contacts = data.contact
+        active = contacts.exclude == 0
+        g1, g2 = contacts.geom1[active], contacts.geom2[active]
+        index = np.flatnonzero(active)
+        touching = lambda x, y: bool(np.any((x[g1] & y[g2]) | (x[g2] & y[g1])))
+        left, right = self.limb["left"], self.limb["right"]
+        hand_cup, arm_cup, force = self._object(model, data, self.cup, index, g1, g2)
+        result = dict(hand_cup=hand_cup, arm_cup=arm_cup, hand_cup_force=force,
+                      cup_table=touching(self.cup, self.table),
+                      cup_tray=touching(self.cup, self.tray), hand_hand=touching(left, right),
+                      ncon=np.int32(data.ncon))
+        for name, mask in self.props.items():
+            hand, arm, force = self._object(model, data, mask, index, g1, g2)
+            result.update({f"hand_{name}": hand, f"arm_{name}": arm, f"hand_{name}_force": force})
+            for support, other in self.supports.items():
+                if support != name:
+                    result[f"{name}_{support}"] = touching(mask, other)
+        return result
 
 
 # name -> (dtype, per-sample shape given model); used for buffers and checks.
-def dataset_layout(model):
+def dataset_layout(model, props=()):
     k = len(FINGER_TARGET_NAMES)
-    return {
+    layout = {
         "time/sim": (np.float64, ()), "time/wall": (np.float64, ()),
         "robot/qpos": (np.float64, (model.nq,)), "robot/qvel": (np.float64, (model.nv,)),
         "robot/ctrl": (np.float64, (model.nu,)),
@@ -204,6 +222,16 @@ def dataset_layout(model):
         "contacts/ncon": (np.int32, ()),
         "assist/active": (bool, (2,)),
     }
+    # Each prop gets the cup's datasets under its own name (see ContactTables).
+    supports = ["table", "tray", *props]
+    for name in props:
+        layout.update({
+            f"scene/{name}_pose": (np.float64, (7,)), f"scene/{name}_linvel": (np.float32, (3,)),
+            f"scene/{name}_angvel": (np.float32, (3,)),
+            f"contacts/hand_{name}": (bool, (2, len(CONTACT_GROUPS))),
+            f"contacts/arm_{name}": (bool, (2,)), f"contacts/hand_{name}_force": (np.float32, (2,)),
+            **{f"contacts/{name}_{support}": (bool, ()) for support in supports if support != name}})
+    return layout
 
 
 def _array_or_nan(value, shape):
@@ -224,7 +252,7 @@ class EpisodeRecorder:
     """
     def __init__(self, model, controller, hands, *, record_dir=DEFAULT_RECORD_DIR,
                  task="cup_to_tray", operator="", source="keyboard", wrist_mode="human",
-                 workspace=True, scale=0.6, video=True, video_fps=30, video_size=(640, 480),
+                 workspace=True, props=(), scale=0.6, video=True, video_fps=30, video_size=(640, 480),
                  max_seconds=120.0, auto_label=True, assist=None, min_reset_seconds=3.0):
         if source not in SOURCES:
             raise ValueError(f"source must be one of {SOURCES}")
@@ -243,6 +271,7 @@ class EpisodeRecorder:
         self.record_dir = Path(record_dir)
         self.task, self.operator, self.source = task, operator, source
         self.wrist_mode, self.workspace, self.scale = wrist_mode, workspace, scale
+        self.props = tuple(props)
         self.video = None
         if video:
             from episode_video import EpisodeVideo
@@ -252,9 +281,10 @@ class EpisodeRecorder:
         self.auto_label = auto_label
         # GraspAssist (--grasp-assist) or None; recorded per sample and in metadata.
         self.assist = assist
-        self.contacts = ContactTables(model)
-        self.layout = dataset_layout(model)
+        self.contacts = ContactTables(model, self.props)
+        self.layout = dataset_layout(model, self.props)
         self.cup_body = model.body("cup").id
+        self.prop_bodies = {name: model.body(name).id for name in self.props}
         self.recording = False
         self.directory = None
         self.notice = None
@@ -399,10 +429,11 @@ class EpisodeRecorder:
         row.update(inputs)
 
         velocity = np.zeros(6)
-        mujoco.mj_objectVelocity(model, data, mujoco.mjtObj.mjOBJ_BODY, self.cup_body, velocity, 0)
-        row["scene/cup_pose"] = np.r_[data.xpos[self.cup_body], data.xquat[self.cup_body]]
-        row["scene/cup_angvel"] = velocity[:3]
-        row["scene/cup_linvel"] = velocity[3:]
+        for name, body in (("cup", self.cup_body), *self.prop_bodies.items()):
+            mujoco.mj_objectVelocity(model, data, mujoco.mjtObj.mjOBJ_BODY, body, velocity, 0)
+            row[f"scene/{name}_pose"] = np.r_[data.xpos[body], data.xquat[body]]
+            row[f"scene/{name}_angvel"] = velocity[:3].copy()
+            row[f"scene/{name}_linvel"] = velocity[3:].copy()
         for name, value in self.contacts.measure(model, data).items():
             row["contacts/" + name] = value
         row["assist/active"] = [bool(self.assist and self.assist.active[side]) for side in SIDES]
@@ -429,6 +460,7 @@ class EpisodeRecorder:
             "end_reason": end_reason,
             "scene": {"scene_version": SCENE_VERSION,
                       "wrist_mode": self.wrist_mode, "workspace": self.workspace,
+                      "props": list(self.props),
                       "scale": self.scale, "cup_start": CUP_START,
                       "tray_center": TRAY_CENTER, "table_top": TABLE_TOP},
             "model": {"nq": model.nq, "nv": model.nv, "nu": model.nu,
@@ -508,18 +540,37 @@ class EpisodeRecorder:
                 dataset = file.create_dataset(name, data=values, compression="gzip")
                 if name == "input/finger_targets":
                     dataset.attrs["names"] = json.dumps(list(FINGER_TARGET_NAMES))
-                elif name == "contacts/hand_cup":
+                elif name.startswith("contacts/hand_") and not name.endswith(("_force", "_hand")):
                     dataset.attrs["groups"] = json.dumps(list(CONTACT_GROUPS))
         os.replace(partial, directory / "episode.h5")
         (directory / "episode.json").write_text(json.dumps(metadata, indent=2) + "\n")
 
     def cup_at_start(self, data, max_offset=.015, max_tilt_deg=10.):
         """True if the cup rests at its start pose (as after H), so an episode can begin."""
-        from workspace_scene import CUP_START
-        cup = data.body("cup")
-        z = cup.xmat.reshape(3, 3)[2, 2]
+        return self.object_at_start(data, "cup", max_offset, max_tilt_deg)
+
+    def object_at_start(self, data, name, max_offset=.015, max_tilt_deg=10.):
+        """True if `name` rests at its start pose; tilt is checked for upright objects only."""
+        from workspace_scene import TASKS, object_start
+        body = data.body(name)
+        z = body.xmat.reshape(3, 3)[2, 2]
         tilt = np.degrees(np.arccos(np.clip(z, -1, 1)))
-        return bool(np.linalg.norm(cup.xpos - CUP_START) <= max_offset and tilt <= max_tilt_deg)
+        upright = name == "cup" or any(spec.get("object") == name and spec.get("upright")
+                                       for spec in TASKS.values())
+        return bool(np.linalg.norm(body.xpos - object_start(name)) <= max_offset
+                    and (tilt <= max_tilt_deg or not upright))
+
+    def task_objects(self):
+        """Bodies that must be back at their start before an episode of this task."""
+        from workspace_scene import TASKS, task_objects
+        if self.task not in TASKS:
+            return ["cup"]
+        return [name for name in task_objects(self.task) if name == "cup" or name in self.props]
+
+    def task_ready(self, data):
+        """Name of the first task object not at its start pose, or None if ready."""
+        return next((name for name in self.task_objects()
+                     if not self.object_at_start(data, name)), None)
 
     def discard(self):
         """Stop and delete the current episode; nothing is kept."""

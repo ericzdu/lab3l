@@ -36,17 +36,18 @@ def palm_inward(controller):
 class Script:
     """Drive the right arm along straight, eased target paths and step physics."""
 
-    def __init__(self, model, data, controller, hands, recorder=None, viewer=None):
+    def __init__(self, model, data, controller, hands, recorder=None, viewer=None, side=SIDE):
         from view_dual_arms import FingerTransition
         self.model, self.data, self.controller, self.hands = model, data, controller, hands
+        self.side = side
         self.recorder, self.viewer = recorder, viewer
         self.fingers = FingerTransition(model)
-        self.rotation = controller.home_rotations[SIDE].copy()
+        self.rotation = controller.home_rotations[self.side].copy()
         self.max_reach_error = 0.
 
     def step(self):
         from view_dual_arms import advance_physics
-        self.controller.set_rotation(SIDE, self.rotation)
+        self.controller.set_rotation(self.side, self.rotation)
         self.controller.command(self.data, dt=.01)
         advance_physics(self.model, self.data, self.controller, finger_motion=self.fingers)
         if self.recorder is not None and self.recorder.recording:
@@ -63,22 +64,22 @@ class Script:
 
     def move(self, goal, speed=SPEED, settle=.4):
         """Straight smooth path from the current target to `goal`, then settle."""
-        start = self.controller.targets[SIDE].copy()
+        start = self.controller.targets[self.side].copy()
         goal = np.asarray(goal, dtype=float)
         duration = max(np.linalg.norm(goal - start) / speed, .05)
         begin = self.data.time
         while self.data.time - begin < duration:
             fraction = min(1., (self.data.time - begin) / duration)
             eased = fraction * fraction * (3 - 2 * fraction)
-            self.controller.set_target(SIDE, start + eased * (goal - start))
-            self.max_reach_error = max(self.max_reach_error, self.controller.reach_errors[SIDE])
+            self.controller.set_target(self.side, start + eased * (goal - start))
+            self.max_reach_error = max(self.max_reach_error, self.controller.reach_errors[self.side])
             self.step()
-        self.controller.set_target(SIDE, goal)
-        self.max_reach_error = max(self.max_reach_error, self.controller.reach_errors[SIDE])
+        self.controller.set_target(self.side, goal)
+        self.max_reach_error = max(self.max_reach_error, self.controller.reach_errors[self.side])
         self.hold(settle)
 
     def hand(self, closed):
-        self.fingers.request(self.data, self.hands[SIDE], closed)
+        self.fingers.request(self.data, self.hands[self.side], closed)
         self.hold((self.fingers.close_seconds if closed else self.fingers.open_seconds) + .4)
 
 

@@ -13,7 +13,7 @@ def motor(spec, name, joint, axis, limit):
         ctrllimited=1, ctrlrange=[-limit, limit])
 
 
-def build_human_model(workspace=False):
+def build_human_model(workspace=False, props=()):
     from workspace_scene import TABLE_TOP
     scene = mujoco.MjSpec.from_string(BASE_SCENE)
     scene.modelname = "human_shaped_dual_arms"
@@ -65,9 +65,12 @@ def build_human_model(workspace=False):
         if not body.mocap:
             body.gravcomp=1
     if workspace:
-        from workspace_scene import add_workspace
+        from workspace_scene import add_props, add_workspace
         # Props are added AFTER arm gravity compensation: the cup must fall.
         add_workspace(scene)
+        add_props(scene, props)
+    elif props:
+        raise ValueError("props need the workspace table (--workspace)")
     return scene.compile()
 
 
