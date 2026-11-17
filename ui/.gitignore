@@ -1,0 +1,8 @@
+node_modules/
+dist/
+*.tsbuildinfo
+__pycache__/
+*.pyc
+preview-*.png
+test-results/
+playwright-report/
