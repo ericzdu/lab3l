@@ -6,6 +6,7 @@ import argparse
 import time
 
 from avp_stream import VisionProStreamer
+from forearm_tracking import forearm_vector
 
 
 def parse_args() -> argparse.Namespace:
@@ -35,10 +36,16 @@ def main() -> None:
             if sample is not None:
                 wrist = sample.right.wrist[:3, 3]
                 pinch = sample.right.pinch_distance
+                try:
+                    arm = sample["right_arm"]
+                except KeyError:
+                    arm = None
+                direction = forearm_vector(arm, sample["right_wrist"])
+                forearm_status = "usable 27-point data" if direction is not None else "unavailable / invalid"
                 print(
                     "right wrist "
                     f"x={wrist[0]: .3f}, y={wrist[1]: .3f}, z={wrist[2]: .3f}; "
-                    f"pinch={pinch:.3f} m"
+                    f"pinch={pinch:.3f} m; forearm={forearm_status}"
                 )
             time.sleep(0.25)
     except KeyboardInterrupt:

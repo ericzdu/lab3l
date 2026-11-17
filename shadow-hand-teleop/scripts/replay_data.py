@@ -1,4 +1,9 @@
-"""Read and write the project's flat, sample-major demonstration format."""
+"""Read and write the project's flat, sample-major demonstration format.
+
+load_demo also reads recorded lab3l.episode files (episode_recorder.py): it
+returns their time/sim, robot/qpos, robot/qvel and robot/ctrl as timestamp,
+qpos, qvel and action, plus parsed "_metadata" and, if labeled, "_labels".
+"""
 from pathlib import Path
 import json
 
@@ -29,6 +34,24 @@ def save_demo(path, arrays, metadata):
     path.with_suffix(".json").write_text(json.dumps(metadata, indent=2) + "\n")
 
 
+EPISODE_SCHEMA = "lab3l.episode"
+
+
+def read_episode_labels(file):
+    """Parsed labels/ group of an open episode file, or None."""
+    if "labels" not in file:
+        return None
+    group = file["labels"]
+    labels = {name: json.loads(group.attrs[name]) for name in ("segments", "events", "outcome", "config")
+              if name in group.attrs}
+    if "phase" in group:
+        labels["phase"] = group["phase"][...]
+        labels["phase_names"] = json.loads(group["phase"].attrs["names"])
+    labels.update({name: group.attrs[name] for name in ("labeler_version", "created_utc")
+                   if name in group.attrs})
+    return labels
+
+
 def load_demo(path, demo="demo_0"):
     path = Path(path)
     if path.suffix.lower() == ".npz":
@@ -39,7 +62,14 @@ def load_demo(path, demo="demo_0"):
             if "holos_convention_version" in file.attrs and "qpos" not in file:
                 from holos_replay import read_holos
                 return read_holos(file, demo)
-            arrays = {name: file[name][...] for name in ("timestamp", "qpos", "qvel", "action") if name in file}
+            if file.attrs.get("schema") == EPISODE_SCHEMA:
+                names = {"timestamp": "time/sim", "qpos": "robot/qpos", "qvel": "robot/qvel",
+                         "action": "robot/ctrl"}
+                arrays = {name: file[source][...] for name, source in names.items() if source in file}
+                arrays["_metadata"] = json.loads(file.attrs["metadata"])
+                arrays["_labels"] = read_episode_labels(file)
+            else:
+                arrays = {name: file[name][...] for name in ("timestamp", "qpos", "qvel", "action") if name in file}
     else:
         raise ValueError("Replay path must end in .npz, .h5, or .hdf5")
     missing = set(("timestamp", "qpos", "qvel", "action")) - arrays.keys()
