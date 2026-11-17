@@ -13,7 +13,7 @@ def motor(spec, name, joint, axis, limit):
         ctrllimited=1, ctrlrange=[-limit, limit])
 
 
-def build_human_model(workspace=False, props=()):
+def build_human_model(workspace=False, props=(), scene_config=None):
     from workspace_scene import TABLE_TOP
     scene = mujoco.MjSpec.from_string(BASE_SCENE)
     scene.modelname = "human_shaped_dual_arms"
@@ -71,6 +71,10 @@ def build_human_model(workspace=False, props=()):
         add_props(scene, props)
     elif props:
         raise ValueError("props need the workspace table (--workspace)")
+    if scene_config is not None:
+        from photo_scene import add_photo_scene
+        # Add after arm gravcomp: imported movable props retain normal gravity.
+        add_photo_scene(scene, scene_config)
     return scene.compile()
 
 

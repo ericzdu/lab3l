@@ -1,0 +1,21 @@
+{
+  "version": 1,
+  "description": "Synthetic mesh-import test only. NOT the supplied coffee-counter image and NOT a SAM 3D reconstruction.",
+  "objects": [
+    {
+      "id": "test_coffee_carton",
+      "provenance": {
+        "kind": "synthetic_test",
+        "note": "Hand-authored low-poly geometry to test the importer. No image inference was run."
+      },
+      "parts": [{"mesh": "carton.obj", "rgba": [0.85, 0.40, 0.15, 1.0]}],
+      "position_m": [0.55, 0.28, 0.60],
+      "yaw_degrees": 15,
+      "fixed": false,
+      "mass_kg": 0.15,
+      "friction": [1.0, 0.01, 0.001],
+      "collision": {"mode": "convex"},
+      "physics_source": "Dimensions, mass and friction are manual test assumptions."
+    }
+  ]
+}
