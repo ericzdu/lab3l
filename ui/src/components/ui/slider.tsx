@@ -1,0 +1,2 @@
+import * as S from '@radix-ui/react-slider';
+export function Slider({value,onValueChange,min=0,max=100,step=1,label}:{value:number[];onValueChange:(v:number[])=>void;min?:number;max?:number;step?:number;label:string}){return <S.Root className="slider" value={value} onValueChange={onValueChange} min={min} max={max} step={step} aria-label={label}><S.Track className="slider-track"><S.Range className="slider-range"/></S.Track><S.Thumb className="slider-thumb"/></S.Root>}
