@@ -258,6 +258,9 @@ def control_status(data, fresh, mapper, controller, paused=False, error=None, re
         status["rec_seconds"] = round(recorder.elapsed(data), 1) if recorder.recording else None
         status["episode_counter"] = recorder.counter
         status["notice"] = recorder.notice
+        if getattr(recorder, "task", "cup_to_tray") != "cup_to_tray":
+            # Studio's Reset step: every object of this task at its start.
+            status["cup_at_start"] = recorder.task_ready(data) is None
         if recorder.last_saved:
             counter, metadata = recorder.last_saved
             outcome = (metadata.get("labels") or {}).get("outcome") or {}

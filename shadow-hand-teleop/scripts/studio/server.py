@@ -103,6 +103,11 @@ def create_app(episodes_dir=None, port=DEFAULT_PORT, token=None, session=None):
     def session_log():
         return jsonify({"lines": live().log_lines()})
 
+    @app.get("/api/tasks")
+    def task_list():
+        from studio.session import tasks
+        return jsonify({"tasks": tasks()})
+
     @app.post("/api/session/start")
     def session_start():
         body = request.get_json(silent=True) or {}
@@ -110,7 +115,8 @@ def create_app(episodes_dir=None, port=DEFAULT_PORT, token=None, session=None):
             live().start(body.get("address"), operator=body.get("operator", ""),
                          auto_recenter=bool(body.get("auto_recenter", True)),
                          headset_view=bool(body.get("headset_view", True)),
-                         grasp_assist=bool(body.get("grasp_assist", False)))
+                         grasp_assist=bool(body.get("grasp_assist", False)),
+                         task=body.get("task") or "cup_to_tray")
         except ValueError as exc:
             return jsonify({"error": str(exc)}), 400
         except RuntimeError as exc:
