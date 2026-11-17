@@ -23,7 +23,8 @@ import numpy as np
 
 import workspace_scene
 from workspace_scene import (PLATE_MARGIN, PROPS, STACK_MARGIN, TASKS, TRAY_HALF_EXTENTS,
-                             TRAY_RIM_THICKNESS, object_half_height, task_spec, task_steps)
+                             TRAY_RIM_THICKNESS, object_half_height, prop_footprint, task_spec,
+                             task_steps)
 
 
 LABELER_VERSION = "2"
@@ -237,7 +238,7 @@ class Signals:
         if target == "tray":
             self.tray_offset = np.abs(self.cup[:, :2] - scene["tray_center"])
             self.tray_bounds = np.asarray(TRAY_HALF_EXTENTS) - TRAY_RIM_THICKNESS
-        elif PROPS[target]["type"] == "box":
+        elif prop_footprint(target)[0] == "box":
             # Block target: offset in the block's own (yawed) frame, inside its top face.
             pose = np.asarray(arrays[f"scene/{target}_pose"], dtype=float)
             w, x, y, z = pose[:, 3:7].T
@@ -245,14 +246,14 @@ class Signals:
             dx, dy = (self.cup[:, :2] - pose[:, :2]).T
             c, s = np.cos(yaw), np.sin(yaw)
             self.tray_offset = np.abs(np.column_stack([c * dx + s * dy, -s * dx + c * dy]))
-            self.tray_bounds = np.asarray(PROPS[target]["size"][:2]) - STACK_MARGIN
+            self.tray_bounds = np.asarray(prop_footprint(target)[1]) - STACK_MARGIN
         else:
             # Round free target: radial distance from its recorded centre,
             # duplicated so the tray's per-axis (x, y) checks apply unchanged.
             center = np.asarray(arrays[f"scene/{target}_pose"], dtype=float)[:, :2]
             radial = np.linalg.norm(self.cup[:, :2] - center, axis=1)
             self.tray_offset = np.column_stack([radial, radial])
-            self.tray_bounds = np.full(2, PROPS[target]["size"][0] - PLATE_MARGIN)
+            self.tray_bounds = np.full(2, prop_footprint(target)[1] - PLATE_MARGIN)
 
     def window(self, start, seconds):
         """Sample indices in [t[start], t[start] + seconds]."""

@@ -1,2 +1,4 @@
 -r requirements.txt
 trimesh==5.2.1
+coacd==1.0.14
+scipy>=1.11

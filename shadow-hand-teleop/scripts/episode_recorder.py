@@ -253,7 +253,8 @@ class EpisodeRecorder:
     def __init__(self, model, controller, hands, *, record_dir=DEFAULT_RECORD_DIR,
                  task="cup_to_tray", operator="", source="keyboard", wrist_mode="human",
                  workspace=True, props=(), scale=0.6, video=True, video_fps=30, video_size=(640, 480),
-                 max_seconds=120.0, auto_label=True, assist=None, min_reset_seconds=3.0):
+                 max_seconds=120.0, auto_label=True, assist=None, min_reset_seconds=3.0,
+                 scene_config=None, scene_objects=()):
         if source not in SOURCES:
             raise ValueError(f"source must be one of {SOURCES}")
         if not TASK_PATTERN.match(task):
@@ -272,6 +273,12 @@ class EpisodeRecorder:
         self.task, self.operator, self.source = task, operator, source
         self.wrist_mode, self.workspace, self.scale = wrist_mode, workspace, scale
         self.props = tuple(props)
+        # --scene-config objects (photo_<id> bodies) are recorded like props:
+        # pose, velocities and contacts. Replay rebuilds them from scene_config.
+        self.scene_config = scene_config
+        self.scene_objects = tuple(scene_objects)
+        self.tracked = self.props + self.scene_objects
+        self.scene_info = self._scene_info()
         self.video = None
         if video:
             from episode_video import EpisodeVideo
@@ -281,16 +288,35 @@ class EpisodeRecorder:
         self.auto_label = auto_label
         # GraspAssist (--grasp-assist) or None; recorded per sample and in metadata.
         self.assist = assist
-        self.contacts = ContactTables(model, self.props)
-        self.layout = dataset_layout(model, self.props)
+        self.contacts = ContactTables(model, self.tracked)
+        self.layout = dataset_layout(model, self.tracked)
         self.cup_body = model.body("cup").id
-        self.prop_bodies = {name: model.body(name).id for name in self.props}
+        self.prop_bodies = {name: model.body(name).id for name in self.tracked}
         self.recording = False
         self.directory = None
         self.notice = None
         self.last_saved = None
         self.counter = None
         self.saved = []
+
+    def _scene_info(self):
+        """Which 3D models this scene uses: metadata.scene.assets / scene_config.
+
+        Computed once at start-up (it hashes the model files), not per episode.
+        """
+        from workspace_scene import PROPS
+        import object_assets
+        info = {}
+        assets = {name: object_assets.summary(PROPS[name]["asset"]) for name in self.props
+                  if PROPS[name]["type"] == "asset"}
+        if assets:
+            info["assets"] = assets
+        if self.scene_config is not None:
+            from photo_scene import scene_summary
+            info["scene_config"] = scene_summary(self.scene_config)
+            if sorted(info["scene_config"]["objects"]) != sorted(self.scene_objects):
+                raise ValueError("scene_objects do not match the --scene-config objects")
+        return info
 
     # -- lifecycle -------------------------------------------------------
     def _next_counter(self):
@@ -461,6 +487,7 @@ class EpisodeRecorder:
             "scene": {"scene_version": SCENE_VERSION,
                       "wrist_mode": self.wrist_mode, "workspace": self.workspace,
                       "props": list(self.props),
+                      **self.scene_info,
                       "scale": self.scale, "cup_start": CUP_START,
                       "tray_center": TRAY_CENTER, "table_top": TABLE_TOP},
             "model": {"nq": model.nq, "nv": model.nv, "nu": model.nu,

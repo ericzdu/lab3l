@@ -1,0 +1,89 @@
+{
+  "schema": "lab3l.object",
+  "version": 1,
+  "id": "test_coffee_carton",
+  "description": "Prepared from carton.obj. Mesh frame: metres, +Z up, origin at bottom centre.",
+  "size_m": [
+    0.08,
+    0.06,
+    0.14
+  ],
+  "mass_kg": 0.15,
+  "contact": {
+    "friction": [
+      1.0,
+      0.005,
+      0.001
+    ],
+    "condim": 4
+  },
+  "footprint": {
+    "shape": "box",
+    "half_extents_m": [
+      0.04,
+      0.03
+    ]
+  },
+  "visual": [
+    {
+      "mesh": "visual_0.obj",
+      "rgba": [
+        0.65,
+        0.55,
+        0.35,
+        1.0
+      ]
+    }
+  ],
+  "collision": {
+    "mode": "hulls",
+    "method": "convex",
+    "hulls": [
+      {
+        "mesh": "collision/hull_00.obj",
+        "volume_m3": 0.0006
+      }
+    ]
+  },
+  "placement": {
+    "position_m": [
+      0.55,
+      0.28,
+      0.6
+    ],
+    "yaw_degrees": 15.0,
+    "fixed": false
+  },
+  "values": {
+    "size": "assumed",
+    "mass": "assumed",
+    "friction": "assumed"
+  },
+  "source": {
+    "kind": "synthetic_test",
+    "name": "carton.obj",
+    "sha256": "3c770eae3e8217e0e5acc56e7a86daa9ef62d74855f6c68e2be2ece684fb47f8",
+    "url": null,
+    "license": null,
+    "attribution": null,
+    "kept_file": "source/carton.obj"
+  },
+  "preparation": {
+    "up_axis": "z",
+    "scale_to_metres": 1.0,
+    "size_from": "scale",
+    "collision": {
+      "method": "convex",
+      "max_hulls": 16,
+      "threshold": 0.05,
+      "max_hull_vertices": 64,
+      "pieces": 1
+    },
+    "texture_max_px": 1024
+  },
+  "notes": [
+    "Base colour texture only; PBR lighting properties are not preserved.",
+    "Hand-authored low-poly geometry to test the importer. Not the coffee-counter image and not a SAM 3D reconstruction.",
+    "Mass, friction and size are inputs, not inferred from the mesh."
+  ]
+}

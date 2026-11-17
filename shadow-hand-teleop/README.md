@@ -305,6 +305,7 @@ datasets under its own name (`scene/<prop>_pose`, `contacts/hand_<prop>`,
 | `block_to_plate` | left | block on the plate (any face down), released, settled |
 | `block_on_big_block` | left | block stacked on the 7 cm big block, inside its top face, released, settled |
 | `set_the_table` | left | apple AND block on the plate at the end, in either order |
+| `<task>_real` | left | the same four tasks with real 3D models (`--props real`; see *Real 3D objects*) |
 
 ```bash
 ./run_human_arms.command --task set_the_table
@@ -801,13 +802,19 @@ by `--headless`; the final status reports surface interactions.
 
 Offline smoke checks: `.venv/bin/python scripts/test_smoke_plume.py`.
 
-### Optional photo-derived 3D asset import (experimental)
+### Real 3D objects (meshes, SAM 3D exports)
 
-See [PHOTO_SCENE_SETUP.md](PHOTO_SCENE_SETUP.md) for the separate SAM 3D / other
-mesh-export adapter and `zsh ./run_photo_scene.command`. The included test carton
-is hand-authored, not a reconstruction. Install `requirements-photo-scene.txt`
-for this optional feature; existing launchers keep their current dependencies.
-Generated coffee-machine assets stay local and are not included in this branch.
-Episode recording is disabled only when `--scene-config` is used, until replay
-can reproduce imported meshes. Existing Studio, recorder, headset and task code
-are retained; no integration with those features is claimed by this experiment.
+Real objects are folders under `assets/objects/` made by
+`scripts/prepare_object.py` from a GLB/OBJ/STL: a visual mesh plus a convex
+decomposition (CoACD) or box collision model, with mass, friction, size and
+source/license in `object.json`. `--props real` puts them on the table, and the
+`_real` tasks (`apple_to_plate_real`, `block_to_plate_real`,
+`block_on_big_block_real`, `set_the_table_real`) are copies of the prop tasks
+with the apple, block, big block and plate swapped for real models. The current
+meshes are YCB scans used as placeholders until SAM 3D exports of the team's own
+objects replace them. `--scene-config` imports other objects (an object folder
+or a scene file); those runs now record and replay too.
+
+How to generate a mesh with SAM 3D, measure the real object and add it:
+[docs/ADDING_OBJECTS.md](docs/ADDING_OBJECTS.md). Preparing a folder needs
+`requirements-photo-scene.txt`; running the sim does not.

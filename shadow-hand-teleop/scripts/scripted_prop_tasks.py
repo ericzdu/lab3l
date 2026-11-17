@@ -1,7 +1,8 @@
 """Deterministic left-hand demos of the prop tasks: onto the plate, stacking, setting the table.
 
 Tasks: apple_to_plate, block_to_plate, block_on_big_block, set_the_table
-(apple then block onto the plate, one after the other).
+(apple then block onto the plate, one after the other), and the same four
+with _real: the real 3D models (workspace_scene.PROPS real_*).
 
 Same method as scripted_cup_to_tray.py: only controller targets within the
 operator's clip box and reach cap, plus FingerTransition open/close. The hand
@@ -26,11 +27,14 @@ SIDE = "left"
 GRASP_OFFSET = np.array([.10, -.03, -.03])
 LIFT = .08
 RELEASE_HEIGHT = .006
-SCRIPTED_TASKS = ("apple_to_plate", "block_to_plate", "block_on_big_block", "set_the_table")
+SCRIPTED_TASKS = ("apple_to_plate", "block_to_plate", "block_on_big_block", "set_the_table",
+                  "apple_to_plate_real", "block_to_plate_real", "block_on_big_block_real",
+                  "set_the_table_real")
 # Where each object goes on its target, relative to the target's centre. The
 # plate is too small for the apple and block side by side at the centre:
 # apple on the near half, block on the far half (tolerates about +/-1 cm).
-PLACE_OFFSETS = {"set_the_table": {"apple": (0, -.03), "block": (0, .035)}}
+PLACE_OFFSETS = {"set_the_table": {"apple": (0, -.03), "block": (0, .035)},
+                 "set_the_table_real": {"real_apple": (0, -.03), "real_block": (0, .035)}}
 
 
 def place_object(script, obj, target, offset=(0, 0)):

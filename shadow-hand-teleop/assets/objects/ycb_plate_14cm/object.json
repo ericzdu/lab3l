@@ -1,0 +1,215 @@
+{
+  "schema": "lab3l.object",
+  "version": 1,
+  "id": "ycb_plate_14cm",
+  "description": "Prepared from textured.obj. Mesh frame: metres, +Z up, origin at bottom centre.",
+  "size_m": [
+    0.13949,
+    0.14,
+    0.014329
+  ],
+  "mass_kg": 0.4,
+  "contact": {
+    "friction": [
+      1.0,
+      0.005,
+      0.001
+    ],
+    "condim": 4
+  },
+  "footprint": {
+    "shape": "round",
+    "radius_m": 0.07014015176321341
+  },
+  "visual": [
+    {
+      "mesh": "visual_0.obj",
+      "rgba": [
+        0.4,
+        0.4,
+        0.4,
+        1.0
+      ],
+      "texture": "visual_0.png"
+    }
+  ],
+  "collision": {
+    "mode": "hulls",
+    "method": "coacd",
+    "hulls": [
+      {
+        "mesh": "collision/hull_00.obj",
+        "volume_m3": 4.0150694434921525e-06
+      },
+      {
+        "mesh": "collision/hull_01.obj",
+        "volume_m3": 6.210813643750903e-06
+      },
+      {
+        "mesh": "collision/hull_02.obj",
+        "volume_m3": 2.926823035143683e-06
+      },
+      {
+        "mesh": "collision/hull_03.obj",
+        "volume_m3": 6.307787802778897e-07
+      },
+      {
+        "mesh": "collision/hull_04.obj",
+        "volume_m3": 1.978558412456172e-06
+      },
+      {
+        "mesh": "collision/hull_05.obj",
+        "volume_m3": 1.483072090678486e-06
+      },
+      {
+        "mesh": "collision/hull_06.obj",
+        "volume_m3": 1.956756542044265e-06
+      },
+      {
+        "mesh": "collision/hull_07.obj",
+        "volume_m3": 3.615362346309108e-06
+      },
+      {
+        "mesh": "collision/hull_08.obj",
+        "volume_m3": 3.3405949095250015e-06
+      },
+      {
+        "mesh": "collision/hull_09.obj",
+        "volume_m3": 7.433649451892187e-07
+      },
+      {
+        "mesh": "collision/hull_10.obj",
+        "volume_m3": 1.3860362556621111e-06
+      },
+      {
+        "mesh": "collision/hull_11.obj",
+        "volume_m3": 4.1944860642580415e-06
+      },
+      {
+        "mesh": "collision/hull_12.obj",
+        "volume_m3": 4.014533699196792e-06
+      },
+      {
+        "mesh": "collision/hull_13.obj",
+        "volume_m3": 1.1528972716915229e-07
+      },
+      {
+        "mesh": "collision/hull_14.obj",
+        "volume_m3": 1.8615676878205294e-06
+      },
+      {
+        "mesh": "collision/hull_15.obj",
+        "volume_m3": 2.568995489985744e-06
+      },
+      {
+        "mesh": "collision/hull_16.obj",
+        "volume_m3": 4.4295984679676085e-06
+      },
+      {
+        "mesh": "collision/hull_17.obj",
+        "volume_m3": 4.511354471282171e-07
+      },
+      {
+        "mesh": "collision/hull_18.obj",
+        "volume_m3": 1.0361064852813552e-06
+      },
+      {
+        "mesh": "collision/hull_19.obj",
+        "volume_m3": 3.18033584673487e-07
+      },
+      {
+        "mesh": "collision/hull_20.obj",
+        "volume_m3": 8.996789588470457e-07
+      },
+      {
+        "mesh": "collision/hull_21.obj",
+        "volume_m3": 4.774012968221836e-07
+      },
+      {
+        "mesh": "collision/hull_22.obj",
+        "volume_m3": 8.459553851863165e-07
+      },
+      {
+        "mesh": "collision/hull_23.obj",
+        "volume_m3": 2.3518150607045947e-06
+      },
+      {
+        "mesh": "collision/hull_24.obj",
+        "volume_m3": 1.8068893974343439e-06
+      },
+      {
+        "mesh": "collision/hull_25.obj",
+        "volume_m3": 2.3447440464363466e-06
+      },
+      {
+        "mesh": "collision/hull_26.obj",
+        "volume_m3": 7.750003441052992e-07
+      },
+      {
+        "mesh": "collision/hull_27.obj",
+        "volume_m3": 2.9955328774937605e-07
+      },
+      {
+        "mesh": "collision/hull_28.obj",
+        "volume_m3": 4.46751222406104e-07
+      },
+      {
+        "mesh": "collision/hull_29.obj",
+        "volume_m3": 2.1242449403141496e-06
+      },
+      {
+        "mesh": "collision/hull_30.obj",
+        "volume_m3": 3.255349745909837e-07
+      },
+      {
+        "mesh": "collision/hull_31.obj",
+        "volume_m3": 5.166067163151053e-07
+      }
+    ]
+  },
+  "placement": {
+    "position_m": [
+      0.55,
+      0.28,
+      0.6
+    ],
+    "yaw_degrees": 0.0,
+    "fixed": false
+  },
+  "values": {
+    "size": "scaled_placeholder",
+    "mass": "assumed",
+    "friction": "assumed"
+  },
+  "source": {
+    "kind": "scanned_dataset",
+    "name": "textured.obj",
+    "sha256": "8b296a2dc7587b590d0dea3fee3ed5fe37b7cacb9d00344bfbbe470bda3337b3",
+    "url": "http://ycb-benchmarks.s3-website-us-east-1.amazonaws.com/data/google/029_plate_google_16k.tgz",
+    "license": "CC-BY-4.0",
+    "attribution": "YCB Object and Model Set (Calli et al., 2015), https://www.ycbbenchmarks.com, licensed CC BY 4.0. Converted, rescaled and decomposed for lab3l.",
+    "kept_file": null
+  },
+  "preparation": {
+    "up_axis": "z",
+    "scale_to_metres": 0.5361889223368645,
+    "rotate_z_degrees": 0.0,
+    "align_footprint": false,
+    "size_from": "width",
+    "collision": {
+      "method": "coacd",
+      "max_hulls": 32,
+      "threshold": 0.01,
+      "max_hull_vertices": 64,
+      "pieces": 32
+    },
+    "texture_max_px": 1024
+  },
+  "notes": [
+    "Base colour texture only; PBR lighting properties are not preserved.",
+    "Fine decomposition (threshold 0.01, 32 pieces): at 0.05 a block set on the dish rocked between pieces and never settled.",
+    "Mass, friction and size are inputs, not inferred from the mesh.",
+    "Placeholder until a SAM 3D export of the team's real object replaces it.",
+    "Scaled from 26 cm to 14 cm so it stays inside the left hand's reach."
+  ]
+}

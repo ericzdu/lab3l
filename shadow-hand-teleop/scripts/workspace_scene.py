@@ -115,7 +115,37 @@ PROPS = {
     # slide when the small block lands on it.
     "big_block": {"type": "box", "size": (.035, .035, .035), "xy": (.39, .16), "mass": .20,
                   "rgba": (.70, .52, .30, 1)},
+    # Real 3D models (object_assets.py, assets/objects/<asset>/): visual mesh
+    # plus a convex-decomposition collision model; mass, friction, size and
+    # footprint come from the object's object.json. Each "replaces" the
+    # primitive prop at the same spot, so the two are never in one scene.
+    # The _real tasks below use them. Current meshes are YCB placeholders.
+    "real_apple":     {"type": "asset", "asset": "ycb_apple", "xy": (.24, .04), "replaces": "apple"},
+    "real_block":     {"type": "asset", "asset": "ycb_block_5cm", "xy": (.30, .27), "replaces": "block"},
+    "real_plate":     {"type": "asset", "asset": "ycb_plate_14cm", "xy": (.23, .18), "replaces": "plate"},
+    "real_big_block": {"type": "asset", "asset": "ycb_block_7cm", "xy": (.39, .16),
+                       "replaces": "big_block"},
 }
+# --props shortcuts: "all" keeps meaning the primitive props; "real" is the
+# real-model set.
+PROP_GROUPS = {"all": [n for n, s in PROPS.items() if s["type"] != "asset"],
+               "real": [n for n, s in PROPS.items() if s["type"] == "asset"]}
+
+
+def expand_props(names):
+    """--props names with group shortcuts expanded, duplicates removed, conflicts refused."""
+    result = []
+    for name in names:
+        for item in PROP_GROUPS.get(name, [name]):
+            if item not in result:
+                result.append(item)
+    unknown = sorted(set(result) - PROPS.keys())
+    if unknown:
+        raise ValueError(f"Unknown prop(s) {unknown}; choose from {sorted(PROPS)} or {sorted(PROP_GROUPS)}")
+    clashes = [f"{n} and {PROPS[n]['replaces']}" for n in result if PROPS[n].get("replaces") in result]
+    if clashes:
+        raise ValueError(f"These props share a spot on the table: {', '.join(clashes)}")
+    return result
 _PROP_GEOMS = {"box": mujoco.mjtGeom.mjGEOM_BOX, "sphere": mujoco.mjtGeom.mjGEOM_SPHERE,
                "cylinder": mujoco.mjtGeom.mjGEOM_CYLINDER,
                "capsule": mujoco.mjtGeom.mjGEOM_CAPSULE, "mesh": mujoco.mjtGeom.mjGEOM_MESH}
@@ -125,6 +155,9 @@ PROP_FRICTION = [1, .005, .001]
 
 
 def prop_half_height(spec):
+    if spec["type"] == "asset":
+        import object_assets
+        return object_assets.half_height(spec["asset"])
     if spec["type"] == "mesh":
         return spec["half_height"]
     size = spec["size"]
@@ -142,10 +175,15 @@ def add_props(scene, names):
     unknown = sorted(set(names) - PROPS.keys())
     if unknown:
         raise ValueError(f"Unknown prop(s) {unknown}; choose from {sorted(PROPS)}")
+    expand_props(names)   # refuses props that share a spot
     for name in (n for n in PROPS if n in names):
         spec = PROPS[name]
         body = scene.worldbody.add_body(name=name, pos=prop_start(name))
         body.add_freejoint(name=f"{name}_free")
+        if spec["type"] == "asset":
+            import object_assets
+            object_assets.add_geoms(scene, body, spec["asset"], name)
+            continue
         shape = "box" if "collision_box" in spec else spec["type"]
         geom = body.add_geom(name=f"{name}_geom", type=_PROP_GEOMS[shape],
             rgba=list(spec["rgba"]), mass=spec["mass"], friction=PROP_FRICTION,
@@ -181,6 +219,11 @@ TASKS = {
     # block on the far half; placing the block first tends to get it knocked
     # off by the apple's approach.
     "set_the_table":      {"steps": ["apple_to_plate", "block_to_plate"]},
+    # The same tasks with the real 3D models (PROPS real_*); scored the same way.
+    "apple_to_plate_real":     {"object": "real_apple", "target": "real_plate", "upright": False},
+    "block_to_plate_real":     {"object": "real_block", "target": "real_plate", "upright": False},
+    "block_on_big_block_real": {"object": "real_block", "target": "real_big_block", "upright": False},
+    "set_the_table_real":      {"steps": ["apple_to_plate_real", "block_to_plate_real"]},
 }
 # An object counts as on the plate when its centre is this far inside the rim,
 # and on a block when its centre is this far inside the block's top face.
@@ -223,3 +266,14 @@ def object_start(name):
 
 def object_half_height(name):
     return CUP_HALF_HEIGHT if name == "cup" else prop_half_height(PROPS[name])
+
+
+def prop_footprint(name):
+    """("round", radius) or ("box", (half_x, half_y)): a target's top, for scoring."""
+    spec = PROPS[name]
+    if spec["type"] == "asset":
+        import object_assets
+        return object_assets.footprint(spec["asset"])
+    if spec["type"] == "box":
+        return "box", tuple(spec["size"][:2])
+    return "round", float(spec["size"][0])
