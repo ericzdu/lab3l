@@ -149,10 +149,22 @@ class HeadsetView:
 
     # -- main thread -----------------------------------------------------------
     def connected(self):
+        """True once the headset receives video.
+
+        avp_stream's is_connected() only turns True on the ICE state
+        "connected"; a Vision Pro on the same Wi-Fi can go straight from
+        "checking" to "completed", leaving it False while video flows, so
+        nothing was ever sent. The library starts its media clock when the
+        connected headset first pulls a video frame, in both IP and room-code
+        mode, so that counts as connected too.
+        """
         try:
-            return bool(self.streamer.is_connected())
+            if self.streamer.is_connected():
+                return True
         except AttributeError:   # older avp_stream: assume yes once started
             return True
+        clock = getattr(self.streamer, "_media_clock", None)
+        return bool(getattr(clock, "is_started", False))
 
     def follow(self, viewer_cam):
         """Copy the Mac viewer camera's pose into our own camera (never mutate theirs)."""

@@ -152,6 +152,15 @@ class HeadsetViewTests(unittest.TestCase):
         self.assertGreaterEqual(self.model.vis.global_.offwidth, 960)
         self.assertGreaterEqual(self.model.vis.global_.offheight, 540)
 
+    def test_connected_once_the_headset_pulls_video(self):
+        """ICE can skip "connected" (checking -> completed): is_connected() stays False."""
+        streamer = FakeStreamer()
+        view = HeadsetView(self.model)
+        view.streamer = streamer
+        self.assertFalse(view.connected())
+        streamer._media_clock = type("Clock", (), {"is_started": True})()
+        self.assertTrue(view.connected())
+
     def test_room_code_mode_waits_for_the_headset_before_offering(self):
         streamer = FakeStreamer()
         streamer._cross_network_mode, streamer._peer_ready = True, False
