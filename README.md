@@ -38,6 +38,7 @@ From `shadow-hand-teleop/` (macOS, Python 3.12):
 | `./run_live_human_arms.command` | Live Vision Pro control (asks for the headset's IP) |
 | `./run_studio.command` | lab3l Studio at http://127.0.0.1:8765 |
 | `./run_human_arms.command --task apple_to_plate_real` | A task with real 3D models |
+| `./run_human_arms.command --task banana_to_plate --grasp-assist` | The team's SAM 3D banana (also `sam_apple_to_plate`) |
 | `./run_photo_scene.command <object folder>` | The scene with an imported 3D object |
 
 Run the tests:
@@ -58,10 +59,11 @@ From `shadow-hand-teleop/`, once: `.venv/bin/python -m pip install -r requiremen
    ```sh
    .venv/bin/python scripts/prepare_object.py ~/Downloads/mug.glb assets/objects/mug \
      --id mug --up-axis y --height 0.095 --mass 0.32 --measured height mass \
-     --source-kind sam3d_export --keep-source
+     --settle --source-kind sam3d_export --keep-source
    zsh ./run_photo_scene.command assets/objects/mug
    ```
-   Lying on its side? Delete the folder and retry with `--up-axis z` or `x`.
+   `--settle` turns it into the pose it rests in on a table. Lying on its side?
+   Delete the folder and retry with `--up-axis z` or `x`.
 5. To use it in tasks, add it to `PROPS` in `scripts/workspace_scene.py`
    (`"real_mug": {"type": "asset", "asset": "mug", "xy": (.24, .04)}`), then
    `./run_human_arms.command --props real_mug`.

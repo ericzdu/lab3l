@@ -125,11 +125,18 @@ PROPS = {
     "real_plate":     {"type": "asset", "asset": "ycb_plate_14cm", "xy": (.23, .18), "replaces": "plate"},
     "real_big_block": {"type": "asset", "asset": "ycb_block_7cm", "xy": (.39, .16),
                        "replaces": "big_block"},
+    # The team's own objects: SAM 3D meshes of a real apple and banana from
+    # photos, sized and weighed by hand (assets/objects/apple, banana).
+    "sam_apple": {"type": "asset", "asset": "apple", "xy": (.24, .04), "replaces": "apple"},
+    # Lies across the left hand's fingers, beside the plate. Further forward
+    # is out of the arm's low reach; this spot overlaps the block's.
+    "banana": {"type": "asset", "asset": "banana", "xy": (.36, .30), "clashes": ("block",)},
 }
 # --props shortcuts: "all" keeps meaning the primitive props; "real" is the
-# real-model set.
+# YCB placeholder set; "sam" the team's own SAM 3D objects.
 PROP_GROUPS = {"all": [n for n, s in PROPS.items() if s["type"] != "asset"],
-               "real": [n for n, s in PROPS.items() if s["type"] == "asset"]}
+               "real": ["real_apple", "real_block", "real_plate", "real_big_block"],
+               "sam": ["sam_apple", "banana"]}
 
 
 def expand_props(names):
@@ -142,7 +149,9 @@ def expand_props(names):
     unknown = sorted(set(result) - PROPS.keys())
     if unknown:
         raise ValueError(f"Unknown prop(s) {unknown}; choose from {sorted(PROPS)} or {sorted(PROP_GROUPS)}")
-    clashes = [f"{n} and {PROPS[n]['replaces']}" for n in result if PROPS[n].get("replaces") in result]
+    clashes = [f"{a} and {b}" for i, a in enumerate(result) for b in result[i + 1:]
+               if tuple(PROPS[a]["xy"]) == tuple(PROPS[b]["xy"])
+               or b in PROPS[a].get("clashes", ()) or a in PROPS[b].get("clashes", ())]
     if clashes:
         raise ValueError(f"These props share a spot on the table: {', '.join(clashes)}")
     return result
@@ -170,6 +179,16 @@ def prop_start(name):
     return np.array([*spec["xy"], TABLE_TOP + prop_half_height(spec)])
 
 
+def add_assist_welds(scene, name):
+    """Inactive grasp-assist welds from each palm to free body `name` (grasp_assist.py)."""
+    for side in ("left", "right"):
+        palm = f"{side}_{side[0]}h_palm"
+        if scene.body(palm) is not None:
+            scene.add_equality(name=f"{side}_grasp_assist_{name}", type=mujoco.mjtEq.mjEQ_WELD,
+                objtype=mujoco.mjtObj.mjOBJ_BODY, name1=palm, name2=name, active=False,
+                data=[0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 1])
+
+
 def add_props(scene, names):
     """Add the named PROPS as free bodies, in PROPS order (stable joint order)."""
     unknown = sorted(set(names) - PROPS.keys())
@@ -180,6 +199,7 @@ def add_props(scene, names):
         spec = PROPS[name]
         body = scene.worldbody.add_body(name=name, pos=prop_start(name))
         body.add_freejoint(name=f"{name}_free")
+        add_assist_welds(scene, name)
         if spec["type"] == "asset":
             import object_assets
             object_assets.add_geoms(scene, body, spec["asset"], name)
@@ -224,6 +244,9 @@ TASKS = {
     "block_to_plate_real":     {"object": "real_block", "target": "real_plate", "upright": False},
     "block_on_big_block_real": {"object": "real_block", "target": "real_big_block", "upright": False},
     "set_the_table_real":      {"steps": ["apple_to_plate_real", "block_to_plate_real"]},
+    # The team's SAM 3D objects onto the (YCB) plate.
+    "sam_apple_to_plate": {"object": "sam_apple", "target": "real_plate", "upright": False},
+    "banana_to_plate":    {"object": "banana", "target": "real_plate", "upright": False},
 }
 # An object counts as on the plate when its centre is this far inside the rim,
 # and on a block when its centre is this far inside the block's top face.
@@ -262,6 +285,18 @@ def task_props(task):
 
 def object_start(name):
     return CUP_START.copy() if name == "cup" else prop_start(name)
+
+
+def task_held_objects(task):
+    """Objects a task's hand picks up (the cup for an unknown task)."""
+    if task not in TASKS:
+        return ["cup"]
+    names = []
+    for step in task_steps(task):
+        name = TASKS[step]["object"]
+        if name not in names:
+            names.append(name)
+    return names
 
 
 def object_half_height(name):

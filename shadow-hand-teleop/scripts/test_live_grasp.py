@@ -80,8 +80,8 @@ class GraspAssistTests(unittest.TestCase):
         self.assertFalse(self.model.eq_active0.any())
 
     def touch(self, thumb=True, finger=True, anything=True):
-        touching = {side: (False, False, False) for side in SIDES}
-        touching["right"] = (thumb, finger, anything)
+        touching = {side: {"cup": (False, False, False)} for side in SIDES}
+        touching["right"]["cup"] = (thumb, finger, anything)
         self.assist.touching = lambda data: touching
 
     def close(self, amount):
@@ -108,7 +108,7 @@ class GraspAssistTests(unittest.TestCase):
         self.assertEqual(self.tick(.05), [])            # still settling after the jump
         events = self.tick(.3)
         self.assertEqual([kind for kind, _ in events], ["assist_on"])
-        self.assertTrue(self.data.eq_active[self.assist.welds["right"]])
+        self.assertTrue(self.data.eq_active[self.assist.welds["right", "cup"]])
 
     def test_engaging_does_not_move_the_cup(self):
         mujoco.mj_forward(self.model, self.data)
@@ -152,7 +152,7 @@ class GraspAssistTests(unittest.TestCase):
 
     def test_one_hand_at_a_time(self):
         self.engaged()
-        touching = {side: (True, True, True) for side in SIDES}
+        touching = {side: {"cup": (True, True, True)} for side in SIDES}
         self.assist.touching = lambda data: touching
         for prefix in ("FF", "MF", "RF", "LF"):
             self.data.ctrl[self.hands["left"][prefix + "J3"]] = .8 * np.pi / 2

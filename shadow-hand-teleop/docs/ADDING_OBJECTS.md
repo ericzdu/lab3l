@@ -70,6 +70,10 @@ zsh ./run_photo_scene.command assets/objects/apple     # look at it on the table
   (round for plates and bowls, box for blocks).
 - `--condim 6` adds rolling friction (round things, so they do not roll away);
   the default 4 adds torsional friction.
+- `--settle`: drops the object on a flat surface in a short simulation and
+  bakes the pose it rests in into the mesh. Recommended for SAM 3D exports and
+  curved objects (the banana tilted 11 degrees, the apple 7); otherwise they
+  rock into a different pose each time they spawn. Not with `--collision box`.
 - An existing folder is never overwritten: prepare into a new folder.
 
 ### Choosing the collision model
@@ -102,6 +106,12 @@ Run it:
 ./run_human_arms.command --task apple_to_plate_real
 .venv/bin/python scripts/scripted_prop_tasks.py --task apple_to_plate_real
 ```
+
+`--grasp-assist` (and Studio's checkbox) welds a closed hand to whichever of
+the task's objects it holds, flagged in the episode. The scripted demos of the
+team's fruit use it by default (`ASSISTED_TASKS` in `scripted_prop_tasks.py`):
+the scripted palm-down fist cannot hold a 40 mm banana or a 61 mm apple
+reliably on its own. A live operator may not need it.
 
 Labels read the object's height and footprint from `object.json`, so success
 scoring needs no code change. Episodes store each real prop's object id,
@@ -153,6 +163,8 @@ original prototype (PHOTO_SCENE_SETUP.md) still load.
 | `ycb_block_5cm` | `real_block` | YCB 070-b wood block, ~25 mm → 50 mm cube | Placeholder; box collision |
 | `ycb_block_7cm` | `real_big_block` | Same scan → 70 mm cube | Placeholder; box collision |
 | `test_coffee_carton` | `assets/photo_scene_test/scene.json` | Hand-authored | Importer test geometry |
+| `apple` | `sam_apple` | SAM 3D from a team photo | 2.5 in, 108 g (measured); settled; rolling friction 0.02 |
+| `banana` | `banana` | SAM 3D from a team photo | 7.5 in, 230 g (measured); turned 90 degrees, settled |
 
 Masses of the placeholders are the primitive props' values, not the YCB
 objects' real masses. YCB credit: [assets/objects/ATTRIBUTION.md](../assets/objects/ATTRIBUTION.md).

@@ -306,6 +306,7 @@ datasets under its own name (`scene/<prop>_pose`, `contacts/hand_<prop>`,
 | `block_on_big_block` | left | block stacked on the 7 cm big block, inside its top face, released, settled |
 | `set_the_table` | left | apple AND block on the plate at the end, in either order |
 | `<task>_real` | left | the same four tasks with real 3D models (`--props real`; see *Real 3D objects*) |
+| `sam_apple_to_plate`, `banana_to_plate` | left | the team's SAM 3D apple / banana onto the plate (`--props sam`) |
 
 ```bash
 ./run_human_arms.command --task set_the_table

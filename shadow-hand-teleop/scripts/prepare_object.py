@@ -209,12 +209,39 @@ def collision_hulls(parts, method, max_hulls, threshold, max_hull_vertices, seed
     return result
 
 
+def settle_rotation(hulls, mass_kg, friction, seconds=3.):
+    """3x3 rotation the object comes to rest in when dropped on a flat floor.
+
+    Simulates the collision pieces alone (MuJoCo, 2 ms steps). A curved or
+    tilted scan (a banana, a SAM 3D export at an angle) otherwise rocks into
+    a different pose every time it is spawned.
+    """
+    import mujoco
+    spec = mujoco.MjSpec()
+    spec.worldbody.add_geom(type=mujoco.mjtGeom.mjGEOM_PLANE, size=[1, 1, .1], friction=list(friction))
+    height = max(float(v[:, 2].max()) for v, _, _ in hulls)
+    body = spec.worldbody.add_body(pos=[0, 0, .002])
+    body.add_freejoint()
+    volumes = np.array([volume for _, _, volume in hulls])
+    for index, ((vertices, faces, _), share) in enumerate(zip(hulls, volumes / volumes.sum())):
+        spec.add_mesh(name=f"hull_{index}", uservert=vertices.ravel(), userface=faces.ravel())
+        body.add_geom(type=mujoco.mjtGeom.mjGEOM_MESH, meshname=f"hull_{index}",
+                      mass=mass_kg * share, friction=list(friction), condim=6)
+    model = spec.compile()
+    data = mujoco.MjData(model)
+    for _ in range(int(seconds / model.opt.timestep)):
+        mujoco.mj_step(model, data)
+    if not np.isfinite(data.qpos).all() or data.qpos[2] < -height:
+        raise ValueError("Settling failed: the collision model fell through the floor")
+    return data.xmat[1].reshape(3, 3).copy()
+
+
 def prepare(source, destination, *, object_id, up_axis, height_m=None, width_m=None, scale=None,
             mass_kg, rotate_z=0., align_footprint=False, friction=DEFAULT_FRICTION, condim=4, footprint="box", collision="coacd",
             max_hulls=16, coacd_threshold=.05, max_hull_vertices=64, texture_size=1024,
             position=(.55, .28, .60), yaw_degrees=0., fixed=False, source_kind="external_mesh",
             source_url=None, license=None, attribution=None, measured=(), keep_source=False,
-            notes=()):
+            notes=(), settle=False):
     """Create a NEW object folder; return its object.json path."""
     if not ID_PATTERN.fullmatch(str(object_id)):
         raise ValueError("id must start with a letter and use letters, digits or '_' (max 48)")
@@ -245,6 +272,24 @@ def prepare(source, destination, *, object_id, up_axis, height_m=None, width_m=N
     appearance = [part_appearance(part, texture_size) for part in parts]
     hulls = None if collision == "box" else \
         collision_hulls(parts, collision, max_hulls, coacd_threshold, max_hull_vertices)
+    tilt = 0.
+    if settle:
+        if hulls is None:
+            raise ValueError("--settle needs a mesh collision model (coacd or convex), not box")
+        rotation = settle_rotation(hulls, mass_kg, friction)
+        tilt = float(np.degrees(np.arccos(np.clip(rotation[2, 2], -1, 1))))
+        turn = np.eye(4)
+        turn[:3, :3] = rotation
+        for part in parts:
+            part.apply_transform(turn)
+        hulls = [(v @ rotation.T, f, volume) for v, f, volume in hulls]
+        # Back to bottom centre at the origin.
+        points = np.concatenate([part.vertices for part in parts])
+        low, high = points.min(axis=0), points.max(axis=0)
+        shift = np.array([(low[0] + high[0]) / 2, (low[1] + high[1]) / 2, low[2]])
+        for part in parts:
+            part.vertices = part.vertices - shift
+        hulls = [(v - shift, f, volume) for v, f, volume in hulls]
     vertices = np.concatenate([part.vertices for part in parts])
     low, high = vertices.min(axis=0), vertices.max(axis=0)
     size = high - low
@@ -319,7 +364,8 @@ def prepare(source, destination, *, object_id, up_axis, height_m=None, width_m=N
                                       "threshold": coacd_threshold,
                                       "max_hull_vertices": max_hull_vertices,
                                       "pieces": pieces},
-                        "texture_max_px": texture_size},
+                        "texture_max_px": texture_size,
+                        "settled": bool(settle), "settle_tilt_degrees": round(tilt, 2)},
         "notes": sorted({note for _, _, note in appearance if note} | set(notes)
                         | {"Base colour texture only; PBR lighting properties are not preserved.",
                            "Mass, friction and size are inputs, not inferred from the mesh."}),
@@ -372,6 +418,9 @@ def main(argv=None):
                         help="Which inputs you measured on the real object: height width mass friction")
     parser.add_argument("--keep-source", action="store_true",
                         help="Copy the original file into source/ (recommended for SAM 3D GLBs)")
+    parser.add_argument("--settle", action="store_true",
+                        help="Turn the object into the pose it rests in on a table (recommended for "
+                             "SAM 3D exports and curved objects)")
     parser.add_argument("--note", action="append", default=[], dest="notes")
     args = parser.parse_args(argv)
     try:

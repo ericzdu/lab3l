@@ -574,7 +574,8 @@ def main():
     assist = None
     if args.grasp_assist:
         from grasp_assist import GraspAssist
-        assist = GraspAssist(model, hands)
+        from workspace_scene import task_held_objects
+        assist = GraspAssist(model, hands, task_held_objects(args.task))
     if args.headless:
         duration = args.seconds or 4
         for _ in range(max(1, int(duration / 0.01))):

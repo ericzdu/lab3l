@@ -134,6 +134,17 @@ class PrepareObjectTests(unittest.TestCase):
         self.assertGreaterEqual(model.geom("thing_visual_0").matid[0], 0)
         self.assertEqual(model.geom("thing_visual_0").contype[0], 0)
 
+    def test_settle_turns_a_tilted_object_onto_its_resting_face(self):
+        box = trimesh.creation.box(extents=[.06, .04, .02])
+        box.apply_transform(trimesh.transformations.rotation_matrix(np.deg2rad(25), [1, 0, 0]))
+        box.export(self.source)
+        config = object_assets.load(self.prepare(height_m=None, scale=1, settle=True).parent)
+        self.assertAlmostEqual(config["preparation"]["settle_tilt_degrees"], 25, delta=1)
+        np.testing.assert_allclose(sorted(config["size_m"]), [.02, .04, .06], atol=1e-3)
+        self.assertAlmostEqual(config["size_m"][2], .02, delta=1e-3)   # lying on its big face
+        with self.assertRaisesRegex(ValueError, "settle"):
+            self.prepare("boxed", collision="box", settle=True)
+
     def test_keep_source_and_provenance(self):
         folder = self.prepare(keep_source=True, source_kind="sam3d_export", license="mine",
                               notes=["hello"]).parent

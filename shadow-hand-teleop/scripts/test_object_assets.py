@@ -31,7 +31,7 @@ class CommittedObjectTests(unittest.TestCase):
                 self.assertIn(config["footprint"]["shape"], ("round", "box"))
 
     def test_real_props_point_at_committed_objects(self):
-        for name in PROP_GROUPS["real"]:
+        for name in PROP_GROUPS["real"] + PROP_GROUPS["sam"]:
             spec = PROPS[name]
             self.assertTrue((object_assets.OBJECTS_DIR / spec["asset"] / "object.json").is_file(), name)
             if "replaces" in spec:   # a copy of a primitive prop sits on its spot
@@ -43,6 +43,10 @@ class CommittedObjectTests(unittest.TestCase):
         self.assertEqual(expand_props(["real", "real_apple"]), PROP_GROUPS["real"])
         with self.assertRaisesRegex(ValueError, "share a spot"):
             expand_props(["apple", "real_apple"])
+        with self.assertRaisesRegex(ValueError, "share a spot"):
+            expand_props(["sam_apple", "real_apple"])   # same spot, neither replaces the other
+        with self.assertRaisesRegex(ValueError, "share a spot"):
+            expand_props(["banana", "block"])           # declared overlap
         with self.assertRaisesRegex(ValueError, "Unknown"):
             expand_props(["mug"])
 

@@ -185,5 +185,10 @@ class RealPropTests(PropTests):
         self.skipTest("primitive prop visuals only")
 
 
+class SamPropTests(RealPropTests):
+    """The team's SAM 3D objects (apple, banana): same physics and asset checks."""
+    GROUP = "sam"
+
+
 if __name__ == "__main__":
     unittest.main()

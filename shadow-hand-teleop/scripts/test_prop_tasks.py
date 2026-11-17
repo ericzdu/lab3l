@@ -261,8 +261,7 @@ class TaskSceneTests(unittest.TestCase):
         object's top (at its start, and resting on the target).
         """
         grasp = {"left": np.array([.10, -.04]), "right": np.array([.10, .04])}
-        scenes = {group: setup("human", workspace=True, props=PROP_GROUPS[group])[:3]
-                  for group in ("all", "real")}
+        scenes = {}
         hand = {"tray": "right", "plate": "left", "big_block": "left",
                 "real_plate": "left", "real_big_block": "left"}
 
@@ -279,7 +278,10 @@ class TaskSceneTests(unittest.TestCase):
                 continue   # steps are checked as single tasks; scripted_cup_to_tray covers the cup
             side = hand[spec["target"]]
             obj, target = spec["object"], spec["target"]
-            scene = scenes["real" if obj in PROP_GROUPS["real"] else "all"]
+            props = tuple(task_props(task))
+            if props not in scenes:
+                scenes[props] = setup("human", workspace=True, props=list(props))[:3]
+            scene = scenes[props]
             height = 2 * object_half_height(obj) + .02
             table = base.workspace_scene.TABLE_TOP
             for xy, z in ((object_start(obj)[:2], table + height),
@@ -346,7 +348,8 @@ class ScriptedPlateTests(unittest.TestCase):
     def test_scripted_prop_tasks_succeed(self):
         import contextlib
         import io
-        from scripted_prop_tasks import SCRIPTED_TASKS, SIDE, run
+        import json
+        from scripted_prop_tasks import ASSISTED_TASKS, SCRIPTED_TASKS, SIDE, run
         from test_scripted_cup_to_tray import is_subsequence, phase_order
         for task in SCRIPTED_TASKS:
             with self.subTest(task=task), tempfile.TemporaryDirectory() as folder, \
@@ -358,6 +361,11 @@ class ScriptedPlateTests(unittest.TestCase):
                 self.assertTrue(is_subsequence(["reach", "grasp", "lift", "transport", "release"],
                                                phase_order(labels)), phase_order(labels))
                 self.assertLess(script.max_reach_error, 1e-9)   # never clipped
+                # Assisted demos say so in the episode, with the object held.
+                metadata = json.loads((Path(directory) / "episode.json").read_text())
+                self.assertEqual(metadata["grasp_assist"], task in ASSISTED_TASKS)
+                if task in ASSISTED_TASKS:
+                    self.assertGreaterEqual(metadata["grasp_assist_activations"], 1)
 
 
 if __name__ == "__main__":

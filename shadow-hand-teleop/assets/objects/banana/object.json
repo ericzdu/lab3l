@@ -1,0 +1,107 @@
+{
+  "schema": "lab3l.object",
+  "version": 1,
+  "id": "banana",
+  "description": "Prepared from object_0.glb. Mesh frame: metres, +Z up, origin at bottom centre.",
+  "size_m": [
+    0.103537,
+    0.19029,
+    0.041237
+  ],
+  "mass_kg": 0.23,
+  "contact": {
+    "friction": [
+      1.0,
+      0.005,
+      0.001
+    ],
+    "condim": 4
+  },
+  "footprint": {
+    "shape": "box",
+    "half_extents_m": [
+      0.05176847410768526,
+      0.09514485819148807
+    ]
+  },
+  "visual": [
+    {
+      "mesh": "visual_0.obj",
+      "rgba": [
+        1.0,
+        1.0,
+        1.0,
+        1.0
+      ],
+      "texture": "visual_0.png"
+    }
+  ],
+  "collision": {
+    "mode": "hulls",
+    "method": "coacd",
+    "hulls": [
+      {
+        "mesh": "collision/hull_00.obj",
+        "volume_m3": 0.00011146991816759215
+      },
+      {
+        "mesh": "collision/hull_01.obj",
+        "volume_m3": 9.014860841695774e-05
+      },
+      {
+        "mesh": "collision/hull_02.obj",
+        "volume_m3": 1.2183672107707599e-06
+      },
+      {
+        "mesh": "collision/hull_03.obj",
+        "volume_m3": 3.6282154957441513e-06
+      }
+    ]
+  },
+  "placement": {
+    "position_m": [
+      0.55,
+      0.28,
+      0.6
+    ],
+    "yaw_degrees": 0.0,
+    "fixed": false
+  },
+  "values": {
+    "size": "measured",
+    "mass": "measured",
+    "friction": "assumed"
+  },
+  "source": {
+    "kind": "sam3d_export",
+    "name": "object_0.glb",
+    "sha256": "7de0b57f7b37feb6f13c35694158844b84f0e1bfe3a203bf5ed5bdb7bdb2286c",
+    "url": null,
+    "license": null,
+    "attribution": null,
+    "kept_file": "source/object_0.glb"
+  },
+  "preparation": {
+    "up_axis": "y",
+    "scale_to_metres": 0.19133256019499753,
+    "rotate_z_degrees": 90.0,
+    "align_footprint": false,
+    "size_from": "width",
+    "collision": {
+      "method": "coacd",
+      "max_hulls": 16,
+      "threshold": 0.05,
+      "max_hull_vertices": 64,
+      "pieces": 4
+    },
+    "texture_max_px": 1024,
+    "settled": true,
+    "settle_tilt_degrees": 11.16
+  },
+  "notes": [
+    "Base colour texture only; PBR lighting properties are not preserved.",
+    "Mass, friction and size are inputs, not inferred from the mesh.",
+    "Measured: 7.5 in long, 230 g.",
+    "Turned 90 degrees so it lies across the palm-down hand's fingers."
+  ]
+}
