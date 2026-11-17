@@ -110,9 +110,25 @@ class HeadsetView:
 
     def _start(self):
         try:
+            self._wait_for_room_peer()
             self.streamer.start_webrtc(blocking=False)
         except Exception as exc:
             self._fail(exc)
+
+    def _wait_for_room_peer(self, poll=.1):
+        """Room-code (cross-network) mode: wait until the headset is in the room.
+
+        avp_stream sends one WebRTC offer and skips any other while it is in
+        progress. Offering before the Vision Pro joins the room loses the
+        offer, and it also blocks the library's own hand-tracking offer, so
+        both time out ("Timeout waiting for SDP answer"). After the headset
+        joins, a single offer carries hand tracking and this video (configured
+        already). Local IP mode needs no wait.
+        """
+        if not getattr(self.streamer, "_cross_network_mode", False):
+            return
+        while not getattr(self.streamer, "_peer_ready", True):
+            time.sleep(poll)
 
     def _fail(self, exc):
         from episode_recorder import scrub

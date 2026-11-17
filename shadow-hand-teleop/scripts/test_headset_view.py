@@ -152,6 +152,17 @@ class HeadsetViewTests(unittest.TestCase):
         self.assertGreaterEqual(self.model.vis.global_.offwidth, 960)
         self.assertGreaterEqual(self.model.vis.global_.offheight, 540)
 
+    def test_room_code_mode_waits_for_the_headset_before_offering(self):
+        streamer = FakeStreamer()
+        streamer._cross_network_mode, streamer._peer_ready = True, False
+        view = HeadsetView(self.model)
+        view.attach(streamer)
+        time.sleep(.3)
+        self.assertEqual([name for name, _ in streamer.calls], ["configure_video"])
+        streamer._peer_ready = True                   # the Vision Pro joined the room
+        self.assertTrue(wait_for(lambda: len(streamer.calls) == 2))
+        self.assertEqual(streamer.calls[1][0], "start_webrtc")
+
     def test_frames_are_new_bgr_arrays_and_rate_limited(self):
         if not self.can_render:
             self.skipTest("mujoco.Renderer unavailable")
