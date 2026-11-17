@@ -815,6 +815,8 @@ meshes are YCB scans used as placeholders until SAM 3D exports of the team's own
 objects replace them. `--scene-config` imports other objects (an object folder
 or a scene file); those runs now record and replay too.
 
-How to generate a mesh with SAM 3D, measure the real object and add it:
-[docs/ADDING_OBJECTS.md](docs/ADDING_OBJECTS.md). Preparing a folder needs
-`requirements-photo-scene.txt`; running the sim does not.
+**Importing your own object:** step-by-step instructions are in the
+[top-level README](../README.md#importing-a-real-3d-object-into-the-simulation)
+(photo → SAM 3D mesh → measure → `prepare_object.py` → view/use), with full
+details in [docs/ADDING_OBJECTS.md](docs/ADDING_OBJECTS.md). Preparing a folder
+needs `requirements-photo-scene.txt`; running the sim does not.

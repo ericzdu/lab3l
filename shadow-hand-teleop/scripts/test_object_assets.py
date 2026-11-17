@@ -34,8 +34,9 @@ class CommittedObjectTests(unittest.TestCase):
         for name in PROP_GROUPS["real"]:
             spec = PROPS[name]
             self.assertTrue((object_assets.OBJECTS_DIR / spec["asset"] / "object.json").is_file(), name)
-            self.assertIn(spec["replaces"], PROPS)
-            self.assertEqual(spec["xy"], PROPS[spec["replaces"]]["xy"])
+            if "replaces" in spec:   # a copy of a primitive prop sits on its spot
+                self.assertIn(spec["replaces"], PROPS)
+                self.assertEqual(spec["xy"], PROPS[spec["replaces"]]["xy"])
 
     def test_prop_groups_and_clashes(self):
         self.assertEqual(expand_props(["all"]), PROP_GROUPS["all"])
