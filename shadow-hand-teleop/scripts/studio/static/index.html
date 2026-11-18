@@ -9,85 +9,145 @@
   <script type="module" src="/static/app.js"></script>
 </head>
 <body>
-  <header class="top">
-    <h1>lab3l Studio</h1>
-    <span id="counts" class="counts"></span>
-    <button id="settings-link" class="link" type="button" hidden>Session settings</button>
-  </header>
-
-  <section class="session" aria-label="Session">
-    <form id="connect" class="connect" autocomplete="off">
-      <label class="field wide">Tracking Streamer IP or room code
-        <input id="address" spellcheck="false" required>
-      </label>
-      <label class="field">Task
-        <select id="task"><option value="cup_to_tray">cup_to_tray</option></select>
-      </label>
-      <label class="field">Operator
-        <input id="operator" maxlength="32" spellcheck="false" placeholder="initials">
-      </label>
-      <label class="toggle"><input type="checkbox" id="auto-recenter" checked> Auto-recenter</label>
-      <label class="toggle"><input type="checkbox" id="headset-view" checked> Headset view</label>
-      <label class="toggle"><input type="checkbox" id="grasp-assist"> Grasp assist</label>
-      <button type="submit" id="start" class="primary">Start</button>
-      <p id="form-error" class="error" role="alert"></p>
-    </form>
-
-    <div id="live" class="live" hidden>
-      <div class="chips">
-        <div class="chip grey" id="chip-left"><span class="dot"></span>Left</div>
-        <div class="chip grey" id="chip-right"><span class="dot"></span>Right</div>
-      </div>
-      <ol class="steps" id="steps">
-        <li data-step="reset"><b>①</b> Reset</li>
-        <li data-step="calibrate"><b>②</b> Calibrate</li>
-        <li data-step="record"><b>③</b> Record</li>
-      </ol>
-      <div class="buttons">
-        <button type="button" data-key="H">Reset <kbd>H</kbd></button>
-        <button type="button" data-key="C">Calibrate <kbd>C</kbd></button>
-        <button type="button" data-key="E" id="record" class="record">Record <kbd>E</kbd></button>
-        <button type="button" data-key="X" class="quiet">Discard <kbd>X</kbd></button>
-        <button type="button" id="stop" class="quiet">Stop session</button>
-      </div>
-      <p id="notice" class="notice"></p>
+<div id="app" class="app">
+  <!-- Left: brand, episode list, log toggle -->
+  <aside class="sidebar" aria-label="Episodes">
+    <div class="brand">
+      <span class="logo">l3</span>
+      <span class="brand-name">lab3l Studio</span>
     </div>
-  </section>
+    <nav class="nav">
+      <div class="nav-head">
+        <span>Episodes</span>
+        <span id="counts" class="counts"></span>
+      </div>
+      <div id="episode-list" class="episode-list"></div>
+    </nav>
+    <div class="sidebar-foot">
+      <button id="log-toggle" class="nav-item" type="button">Show log</button>
+      <span id="exit-code" class="exit-code"></span>
+    </div>
+  </aside>
 
-  <main class="main">
-    <section class="result" aria-label="Result">
-      <div id="result-empty" class="empty">Record an attempt. The labeled result plays here.</div>
-      <div id="result-card" hidden>
-        <div class="result-head">
-          <span id="badge" class="badge"></span>
-          <span id="episode-name" class="episode-name"></span>
-          <span id="placement" class="placement"></span>
-          <div class="confidence" title="Labeler confidence">
-            <span>confidence</span>
-            <div class="bar"><div id="confidence-fill"></div></div>
-          </div>
+  <!-- Center: breadcrumb, session, video -->
+  <div class="center">
+    <header class="crumbs">
+      <button id="sidebar-toggle" class="icon" type="button" title="Toggle sidebar" aria-label="Toggle sidebar">
+        <svg viewBox="0 0 20 20" aria-hidden="true"><rect x="2.5" y="3.5" width="15" height="13" rx="2"/><line x1="7.5" y1="3.5" x2="7.5" y2="16.5"/></svg>
+      </button>
+      <span class="crumb">Episodes</span>
+      <span class="crumb-sep">›</span>
+      <span id="crumb-episode" class="crumb current">No episode</span>
+      <button id="settings-link" class="link" type="button" hidden>Session settings</button>
+      <button id="props-toggle" class="icon" type="button" title="Toggle properties" aria-label="Toggle properties">
+        <svg viewBox="0 0 20 20" aria-hidden="true"><rect x="2.5" y="3.5" width="15" height="13" rx="2"/><line x1="12.5" y1="3.5" x2="12.5" y2="16.5"/></svg>
+      </button>
+    </header>
+
+    <section class="session" aria-label="Session">
+      <form id="connect" class="connect" autocomplete="off">
+        <label class="field wide">Tracking Streamer IP or room code
+          <input id="address" spellcheck="false" required>
+        </label>
+        <label class="field">Task
+          <select id="task"><option value="cup_to_tray">cup_to_tray</option></select>
+        </label>
+        <label class="field">Operator
+          <input id="operator" maxlength="32" spellcheck="false" placeholder="initials">
+        </label>
+        <label class="toggle"><input type="checkbox" id="auto-recenter" checked> Auto-recenter</label>
+        <label class="toggle"><input type="checkbox" id="headset-view" checked> Headset view</label>
+        <label class="toggle"><input type="checkbox" id="grasp-assist"> Grasp assist</label>
+        <button type="submit" id="start" class="primary">Start</button>
+        <p id="form-error" class="error" role="alert"></p>
+      </form>
+
+      <div id="live" class="live" hidden>
+        <div class="chips">
+          <div class="chip grey" id="chip-left"><span class="dot"></span>Left</div>
+          <div class="chip grey" id="chip-right"><span class="dot"></span>Right</div>
         </div>
-        <div class="video-wrap">
-          <div class="tabs" role="tablist">
-            <button type="button" role="tab" data-camera="overview" class="active">Overview</button>
-            <button type="button" role="tab" data-camera="operator">Operator</button>
-          </div>
-          <video id="video" muted playsinline controls preload="auto"></video>
-          <div id="timeline" class="timeline" title="Click to seek"></div>
+        <ol class="steps" id="steps">
+          <li data-step="reset"><b>①</b> Reset</li>
+          <li data-step="calibrate"><b>②</b> Calibrate</li>
+          <li data-step="record"><b>③</b> Record</li>
+        </ol>
+        <div class="buttons">
+          <button type="button" data-key="H">Reset <kbd>H</kbd></button>
+          <button type="button" data-key="C">Calibrate <kbd>C</kbd></button>
+          <button type="button" data-key="E" id="record" class="record">Record <kbd>E</kbd></button>
+          <button type="button" data-key="X" class="quiet">Discard <kbd>X</kbd></button>
+          <button type="button" id="stop" class="quiet">Stop session</button>
         </div>
-        <p id="phase-strip" class="phase-strip"></p>
+        <p id="notice" class="notice"></p>
       </div>
     </section>
-    <aside class="episodes" aria-label="Episodes">
-      <h2>Episodes</h2>
-      <div id="episode-list" class="episode-list"></div>
-    </aside>
-  </main>
 
-  <footer class="log">
-    <button id="log-toggle" class="link" type="button">Show log</button>
-    <span id="exit-code" class="exit-code"></span>
-    <pre id="log" hidden></pre>
-  </footer>
+    <main class="stage" aria-label="Result">
+      <div id="result-empty" class="empty">Record an attempt. The labeled result plays here.</div>
+      <div id="result-card" class="result-card" hidden>
+        <div class="tabs" role="tablist">
+          <button type="button" role="tab" data-camera="overview" class="active">Overview</button>
+          <button type="button" role="tab" data-camera="operator">Operator</button>
+        </div>
+        <div class="video-box">
+          <video id="video" muted playsinline preload="auto"></video>
+        </div>
+        <div class="player">
+          <div class="scrub-row">
+            <span id="time-now" class="time">0:00</span>
+            <div id="scrub" class="scrub" title="Seek">
+              <div id="scrub-fill" class="scrub-fill"></div>
+              <div id="scrub-knob" class="scrub-knob"></div>
+            </div>
+            <span id="time-total" class="time">0:00</span>
+          </div>
+          <div id="timeline" class="timeline" title="Click to seek"></div>
+          <div class="controls">
+            <span class="controls-side"></span>
+            <div class="controls-main">
+              <button id="back" class="icon" type="button" title="Back 5 s" aria-label="Back 5 seconds">
+                <svg viewBox="0 0 20 20" aria-hidden="true"><line x1="5" y1="4" x2="5" y2="16"/><path d="M15 4 L7 10 L15 16 Z"/></svg>
+              </button>
+              <button id="play" class="play" type="button" title="Play (space)" aria-label="Play">
+                <svg id="play-icon" viewBox="0 0 20 20" aria-hidden="true"><path d="M7 4.5 L15.5 10 L7 15.5 Z"/></svg>
+              </button>
+              <button id="forward" class="icon" type="button" title="Forward 5 s" aria-label="Forward 5 seconds">
+                <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M5 4 L13 10 L5 16 Z"/><line x1="15" y1="4" x2="15" y2="16"/></svg>
+              </button>
+            </div>
+            <div class="controls-side right">
+              <button id="loop" class="icon" type="button" title="Loop" aria-label="Loop" aria-pressed="false">
+                <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M4 9 V7.5 A2 2 0 0 1 6 5.5 H15 M12.5 3 L15 5.5 L12.5 8"/><path d="M16 11 V12.5 A2 2 0 0 1 14 14.5 H5 M7.5 17 L5 14.5 L7.5 12"/></svg>
+              </button>
+              <button id="speed" class="speed" type="button" title="Playback speed">1×</button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </main>
+
+    <pre id="log" class="log" hidden></pre>
+  </div>
+
+  <!-- Right: properties of the episode on screen -->
+  <aside class="props" aria-label="Properties">
+    <header class="props-head">Properties</header>
+    <p id="props-empty" class="props-empty">No episode selected.</p>
+    <dl id="props-list" class="props-list" hidden>
+      <div class="row"><dt>Outcome</dt><dd><span id="badge" class="badge"></span></dd></div>
+      <div class="row"><dt>Episode</dt><dd id="episode-name"></dd></div>
+      <div class="row"><dt>Placement</dt><dd id="placement"></dd></div>
+      <div class="row"><dt>Confidence</dt>
+        <dd class="confidence" title="Labeler confidence">
+          <span id="confidence-text"></span>
+          <div class="bar"><div id="confidence-fill"></div></div>
+        </dd>
+      </div>
+      <div class="row"><dt>Grasp assist</dt><dd id="assist"></dd></div>
+      <div class="row stacked"><dt>Phases</dt><dd id="phase-strip" class="phase-strip"></dd></div>
+    </dl>
+  </aside>
+</div>
 </body>
 </html>

@@ -1,4 +1,5 @@
-// Result card: outcome badge, confidence, placement, video with tabs, timeline, phase strip.
+// Result: video with camera tabs and timeline in the stage; outcome, confidence,
+// placement and phases in the properties panel.
 import { getJSON } from "./api.js";
 import { renderTimeline, simTimeAt, videoTimeFor } from "./timeline.js";
 
@@ -47,18 +48,23 @@ export async function showEpisode(folder, { autoplay = false } = {}) {
   const detail = await getJSON(`/api/episodes/${encodeURIComponent(folder)}`);
   if (current && current.stopTimeline) current.stopTimeline();
   current = { folder, detail, camera: null, stopTimeline: null };
+  const name = `Episode ${String(detail.number).padStart(4, "0")}`;
   $("result-empty").hidden = true;
   $("result-card").hidden = false;
+  $("props-empty").hidden = true;
+  $("props-list").hidden = false;
+  $("crumb-episode").textContent = name;
   const badge = $("badge");
   badge.textContent = badgeText(detail);
   badge.className = `badge ${detail.outcome}`;
-  $("episode-name").textContent = `Episode ${String(detail.number).padStart(4, "0")}`
-    + (detail.grasp_assist ? " · grasp assist" : "");
-  $("placement").textContent = detail.placement || "";
+  $("episode-name").textContent = name;
+  $("placement").textContent = detail.placement || "—";
+  $("assist").textContent = detail.grasp_assist ? "On" : "Off";
   const confidence = detail.confidence == null ? 0 : detail.confidence;
-  $("confidence-fill").style.width = `${Math.round(100 * confidence)}%`;
-  $("confidence-fill").parentElement.parentElement.title = `Labeler confidence ${Math.round(100 * confidence)}%`;
-  $("phase-strip").textContent = detail.phase_strip || "";
+  const percent = `${Math.round(100 * confidence)}%`;
+  $("confidence-fill").style.width = percent;
+  $("confidence-text").textContent = detail.confidence == null ? "—" : percent;
+  $("phase-strip").textContent = detail.phase_strip || "—";
   setCamera("overview", { keepTime: false, autoplay });
   document.dispatchEvent(new CustomEvent("episode-shown", { detail: { folder } }));
 }
