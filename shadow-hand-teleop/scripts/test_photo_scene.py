@@ -1,19 +1,23 @@
-"""Offline mesh import tests; no SAM inference or headset-validation claims."""
-import copy
+"""--scene-config: object folders, version-2 scenes, legacy bundles, recording/replay.
+
+No SAM inference or headset-validation claims.
+"""
 import json
 from pathlib import Path
+import shutil
 import tempfile
 import unittest
 
 import mujoco
 import numpy as np
-from PIL import Image
 import trimesh
 
-from photo_scene import add_photo_scene, load_bundle, normalize_parts, prepare_bundle, triangle_parts
+from photo_scene import add_photo_scene, load_bundle, object_names, scene_digest, scene_summary
+from prepare_object import prepare
 
 
-FIXTURE = Path(__file__).resolve().parents[1] / "assets/photo_scene_test/scene.json"
+PROJECT = Path(__file__).resolve().parents[1]
+FIXTURE = PROJECT / "assets/photo_scene_test/scene.json"
 
 
 class PhotoSceneTests(unittest.TestCase):
@@ -21,120 +25,85 @@ class PhotoSceneTests(unittest.TestCase):
         self.temporary = tempfile.TemporaryDirectory()
         self.addCleanup(self.temporary.cleanup)
         self.root = Path(self.temporary.name)
-        self.source = self.root / "box.glb"
-        trimesh.creation.box(extents=[2, 4, 6]).export(self.source)
+        source = self.root / "box.glb"
+        trimesh.creation.box(extents=[2, 4, 6]).export(source)
+        self.folder = prepare(source, self.root / "scene/objects/thing", object_id="thing",
+                              up_axis="z", height_m=.12, mass_kg=.2, collision="convex",
+                              position=(.55, .28, .60)).parent
 
-    def prepare(self, **kwargs):
-        return prepare_bundle(self.source, self.root / "prepared", object_id="test",
-            height_m=.12, up_axis="z", **kwargs)
-
-    def write_config(self, config):
-        path = self.root / "test.json"
-        path.write_text(json.dumps(config), encoding="utf-8")
+    def scene(self, objects):
+        path = self.root / "scene/scene.json"
+        path.write_text(json.dumps({"version": 2, "objects": objects}), encoding="utf-8")
         return path
 
-    def test_uniform_scale_bottom_origin(self):
-        path = self.prepare()
-        mesh = load_bundle(path)[0]["parts"][0][0]
-        np.testing.assert_allclose(mesh.extents, [.04, .08, .12], atol=1e-9)
-        np.testing.assert_allclose(mesh.bounds[0], [-.02, -.04, 0], atol=1e-9)
-        metadata = json.loads(path.read_text())["objects"][0]
-        self.assertFalse(metadata["provenance"]["inference_run_verified"])
-        self.assertEqual(metadata["preparation"]["physics_source"], "manual assumptions, not inferred from image")
+    def build(self, path):
+        spec = mujoco.MjSpec()
+        add_photo_scene(spec, path)
+        return spec.compile()
 
-    def test_source_up_axis_is_explicit(self):
-        part = trimesh.creation.box(extents=[2, 4, 6])
-        result, _ = normalize_parts([part], .2, "y")
-        np.testing.assert_allclose(result[0].extents, [.1, .3, .2], atol=1e-9)
+    def test_object_folder_uses_its_own_placement(self):
+        model = self.build(self.folder)
+        self.assertEqual(object_names(self.folder), ["photo_thing"])
+        data = mujoco.MjData(model)
+        mujoco.mj_forward(model, data)
+        # Placement is the bottom centre; the body origin is the box centre.
+        np.testing.assert_allclose(data.body("photo_thing").xpos, [.55, .28, .66], atol=1e-9)
+        self.assertAlmostEqual(model.body("photo_thing").mass[0], .2)
 
-    def test_glb_scene_transforms_and_instances(self):
-        scene = trimesh.Scene()
-        for x in (0, 3):
-            matrix = np.eye(4)
-            matrix[0, 3] = x
-            scene.add_geometry(trimesh.creation.box(), transform=matrix)
-        scene.export(self.source)
-        parts = triangle_parts(self.source)
-        self.assertEqual(len(parts), 2)
-        centres = sorted(part.centroid[0] for part in parts)
-        np.testing.assert_allclose(centres, [0, 3], atol=1e-12)
+    def test_version_2_scene_with_relative_and_id_assets(self):
+        path = self.scene([
+            {"id": "a", "asset": "objects/thing", "position_m": [.5, .2, .6], "yaw_degrees": 90},
+            {"id": "carton", "asset": "test_coffee_carton", "position_m": [.7, .2, .6], "fixed": True}])
+        model = self.build(path)
+        self.assertEqual(object_names(path), ["photo_a", "photo_carton"])
+        self.assertEqual(model.njnt, 1)                       # the fixed carton has no joint
+        self.assertEqual(model.body("photo_a").quat.round(6).tolist(),
+                         np.round([np.cos(np.pi / 4), 0, 0, np.sin(np.pi / 4)], 6).tolist())
 
-    def test_obj_and_stl_input(self):
-        for extension in ("obj", "stl"):
-            path = self.root / f"box.{extension}"
-            trimesh.creation.box().export(path)
-            self.assertEqual(len(triangle_parts(path)), 1)
-
-    def test_gaussian_or_point_cloud_is_rejected(self):
-        path = self.root / "points.ply"
-        trimesh.points.PointCloud(np.random.default_rng(2).random((20, 3))).export(path)
-        with self.assertRaisesRegex(ValueError, "Point clouds"):
-            triangle_parts(path)
-
-    def test_destination_is_never_overwritten(self):
-        self.prepare()
-        with self.assertRaisesRegex(ValueError, "already exists"):
-            self.prepare()
-
-    def test_bad_dimensions_and_mass_are_rejected(self):
-        for kwargs in ({"height_m": float("nan")}, {"height_m": 0}, {"mass_kg": -1}):
-            options = dict(object_id="test", height_m=.12, up_axis="z")
-            options.update(kwargs)
-            with self.assertRaises(ValueError):
-                prepare_bundle(self.source, self.root / "bad", **options)
-
-    def test_bundle_asset_cannot_escape_directory(self):
-        path = self.prepare()
-        config = json.loads(path.read_text())
-        config["objects"][0]["parts"][0]["mesh"] = "../box.glb"
-        path.write_text(json.dumps(config))
+    def test_asset_cannot_escape_the_scene(self):
+        shutil.copytree(self.folder, self.root / "outside")
+        path = self.scene([{"id": "a", "asset": "../outside", "position_m": [.5, .2, .6]}])
         with self.assertRaisesRegex(ValueError, "outside scene bundle"):
-            load_bundle(path)
+            self.build(path)
+
+    def test_object_files_cannot_escape_their_folder(self):
+        config = json.loads((self.folder / "object.json").read_text())
+        config["visual"][0]["mesh"] = "../../box.glb"
+        (self.folder / "object.json").write_text(json.dumps(config))
+        with self.assertRaisesRegex(ValueError, "outside object folder"):
+            self.build(self.folder)
 
     def test_duplicate_ids_rejected(self):
-        path = self.prepare()
-        config = json.loads(path.read_text())
-        config["objects"].append(copy.deepcopy(config["objects"][0]))
-        path.write_text(json.dumps(config))
+        entry = {"id": "a", "asset": "objects/thing", "position_m": [.5, .2, .6]}
         with self.assertRaisesRegex(ValueError, "Duplicate"):
-            load_bundle(path)
+            self.build(self.scene([entry, dict(entry)]))
 
-    def test_texture_uv_survives_glb_to_mujoco(self):
-        mesh = trimesh.creation.box()
-        # Synthetic 2x2 texture tests UV/material plumbing, not reconstruction.
-        mesh.visual = trimesh.visual.texture.TextureVisuals(
-            uv=np.linspace(0, 1, len(mesh.vertices) * 2).reshape(-1, 2),
-            image=Image.new("RGB", (2, 2), (180, 40, 20)))
-        mesh.export(self.source)
-        path = self.prepare()
-        spec = mujoco.MjSpec()
-        add_photo_scene(spec, path)
-        model = spec.compile()
-        self.assertEqual(model.ntex, 1)
-        self.assertEqual(model.nmat, 1)
-        self.assertGreater(model.nmeshtexcoord, 0)
-        self.assertEqual(model.geom("photo_test_visual_0").contype[0], 0)
-        self.assertGreaterEqual(model.geom("photo_test_visual_0").matid[0], 0)
+    def test_digest_follows_the_object_files(self):
+        path = self.scene([{"id": "a", "asset": "objects/thing", "position_m": [.5, .2, .6]}])
+        before = scene_digest(path)
+        self.assertEqual(before, scene_digest(path))
+        with open(self.folder / "visual_0.obj", "a") as file:
+            file.write("# edited\n")
+        self.assertNotEqual(before, scene_digest(path))
 
-    def test_multiple_boxes_allow_a_manual_cavity(self):
-        path = self.prepare()
-        config = json.loads(path.read_text())
-        config["objects"][0]["collision"] = {"mode": "boxes", "boxes": [
-            {"position_m": [-.018, 0, .06], "half_size_m": [.002, .04, .06]},
-            {"position_m": [.018, 0, .06], "half_size_m": [.002, .04, .06]}]}
+    def test_legacy_version_1_bundle_still_loads(self):
+        """The original prototype's bundles (box/convex/boxes collision) keep working."""
+        legacy = self.root / "legacy"
+        legacy.mkdir()
+        trimesh.creation.box(extents=[.04, .08, .12]).export(legacy / "visual_0.obj")
+        config = {"version": 1, "objects": [{
+            "id": "old", "parts": [{"mesh": "visual_0.obj"}], "position_m": [.5, .2, .6],
+            "mass_kg": .15, "collision": {"mode": "boxes", "boxes": [
+                {"position_m": [-.018, 0, .06], "half_size_m": [.002, .04, .06]},
+                {"position_m": [.018, 0, .06], "half_size_m": [.002, .04, .06]}]}}]}
+        path = legacy / "scene.json"
         path.write_text(json.dumps(config))
-        spec = mujoco.MjSpec()
-        add_photo_scene(spec, path)
-        model = spec.compile()
-        self.assertAlmostEqual(model.body("photo_test").mass[0], .15)
-        self.assertEqual(model.geom("photo_test_collision_0").type[0], mujoco.mjtGeom.mjGEOM_BOX)
-
-    def test_fixed_fixture_has_no_free_joint(self):
-        path = self.prepare(fixed=True, collision="box")
-        spec = mujoco.MjSpec()
-        add_photo_scene(spec, path)
-        model = spec.compile()
-        self.assertEqual(model.njnt, 0)
+        self.assertEqual(len(load_bundle(path)), 1)
+        model = self.build(path)
+        self.assertAlmostEqual(model.body("photo_old").mass[0], .15)
+        self.assertEqual(model.geom("photo_old_collision_1").type[0], mujoco.mjtGeom.mjGEOM_BOX)
+        self.assertEqual(object_names(path), ["photo_old"])
+        self.assertEqual(len(scene_digest(path)), 64)
 
     def test_original_arms_workspace_and_imported_prop(self):
         from view_dual_arms import setup, advance_physics
@@ -159,6 +128,35 @@ class PhotoSceneTests(unittest.TestCase):
         self.assertGreaterEqual(model.body("cup").id, 0)
         self.assertGreaterEqual(model.body("tray").id, 0)
         self.assertEqual(model.nu, 50)
+
+    def test_imported_scene_is_recorded_and_replayed(self):
+        from episode_recorder import EpisodeRecorder
+        from replay_demo import asset_warnings, episode_model
+        from test_episode_recorder import run
+        from view_dual_arms import setup
+        names = object_names(FIXTURE)
+        model, data, controller, hands = setup("human", workspace=True, scene_config=FIXTURE)
+        recorder = EpisodeRecorder(model, controller, hands, record_dir=self.root / "episodes",
+                                   source="scripted_demo", video=False, auto_label=False,
+                                   scene_config=FIXTURE, scene_objects=names)
+        recorder.start(data)
+        run(recorder, model, data, controller, .5)
+        directory = recorder.stop(data, "user_stop")
+        metadata = json.loads((directory / "episode.json").read_text())
+        info = metadata["scene"]["scene_config"]
+        self.assertEqual(info["path"], "assets/photo_scene_test/scene.json")
+        self.assertEqual(info, json.loads(json.dumps(scene_summary(FIXTURE))))
+        import h5py
+        with h5py.File(directory / "episode.h5") as file:
+            self.assertIn("scene/photo_test_coffee_carton_pose", file)
+            self.assertIn("contacts/hand_photo_test_coffee_carton", file)
+        self.assertEqual(episode_model(metadata).nq, model.nq)
+        self.assertEqual(asset_warnings(metadata), [])
+        info["sha256"] = "0" * 64
+        self.assertIn("changed since this episode", asset_warnings(metadata)[0])
+        info["path"] = "assets/does_not_exist/scene.json"
+        with self.assertRaisesRegex(ValueError, "not in this checkout"):
+            episode_model(metadata)
 
 
 if __name__ == "__main__":

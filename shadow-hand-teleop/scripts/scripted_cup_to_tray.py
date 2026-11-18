@@ -44,14 +44,19 @@ class Script:
         self.fingers = FingerTransition(model)
         self.rotation = controller.home_rotations[self.side].copy()
         self.max_reach_error = 0.
+        self.assist = None   # optional GraspAssist, flagged in the episode
 
     def step(self):
         from view_dual_arms import advance_physics
         self.controller.set_rotation(self.side, self.rotation)
         self.controller.command(self.data, dt=.01)
         advance_physics(self.model, self.data, self.controller, finger_motion=self.fingers)
+        for kind, payload in self.assist.update(self.data) if self.assist else ():
+            if self.recorder is not None:
+                self.recorder.event(self.data, kind, **payload)
         if self.recorder is not None and self.recorder.recording:
             self.recorder.sample(self.data, samples={}, fresh={"left": False, "right": False})
+            self.recorder.maybe_render(self.data)   # --video: render due camera frames
         if self.viewer is not None:
             import time
             self.viewer.sync()

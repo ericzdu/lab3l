@@ -61,6 +61,22 @@ def chip(side_status):
     return "green" if side_status.get("follow") else "amber"
 
 
+DEFAULT_TASK = "cup_to_tray"
+
+
+def tasks():
+    """Scored tasks the page offers (workspace_scene.TASKS), default first.
+
+    Re-reads assets/scenarios each time, so a new scenario file shows up without
+    restarting Studio. A scenario's single steps are not offered on their own.
+    """
+    import scenarios
+    from workspace_scene import TASKS
+    scenarios.register(quiet=True)
+    return [DEFAULT_TASK, *(name for name, spec in TASKS.items()
+                            if name != DEFAULT_TASK and "part_of" not in spec)]
+
+
 class Session:
     def __init__(self, launcher=None, env=None, cwd=PROJECT, stop_wait=STOP_WAIT):
         self.launcher = list(launcher or default_launcher())
@@ -82,9 +98,11 @@ class Session:
         return self.process is not None and self.process.poll() is None
 
     def command(self, address, port, token, operator="", auto_recenter=True, headset_view=True,
-                grasp_assist=False):
+                grasp_assist=False, task=DEFAULT_TASK):
         argv = [*self.launcher, "--wrist", "human", "--workspace", "--clean-ui", "--no-panel",
                 "--address", address, "--control-port", str(port), "--control-token", token]
+        if task != DEFAULT_TASK:
+            argv += ["--task", task]   # the sim adds the task's props
         if operator:
             argv += ["--operator", operator]
         if auto_recenter:
@@ -95,8 +113,12 @@ class Session:
             argv.append("--grasp-assist")
         return argv
 
-    def start(self, address, operator="", auto_recenter=True, headset_view=True, grasp_assist=False):
+    def start(self, address, operator="", auto_recenter=True, headset_view=True, grasp_assist=False,
+              task=DEFAULT_TASK):
         address = str(address or "").strip()
+        task = str(task or DEFAULT_TASK)
+        if task not in tasks():
+            raise ValueError(f"Unknown task: {task}")
         operator = str(operator or "").strip()
         if not address or len(address) > 200 or any(c.isspace() for c in address) or address.startswith("-"):
             raise ValueError("Enter the Tracking Streamer IP or room code")
@@ -112,10 +134,12 @@ class Session:
             self.log.clear()
             self.status, self.exit_code, self.crashed, self.stopping = None, None, False, False
             self.options = {"operator": operator, "auto_recenter": bool(auto_recenter),
-                            "headset_view": bool(headset_view), "grasp_assist": bool(grasp_assist)}
+                            "headset_view": bool(headset_view), "grasp_assist": bool(grasp_assist),
+                            "task": task}
             self._address, self._token = address, token
             self.process = subprocess.Popen(
-                self.command(address, port, token, operator, auto_recenter, headset_view, grasp_assist),
+                self.command(address, port, token, operator, auto_recenter, headset_view, grasp_assist,
+                             task),
                 cwd=self.cwd, env=env, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
                 stderr=subprocess.STDOUT, text=True, bufsize=1,
                 # Own process group: a terminal Ctrl-C/hang-up reaches Studio, which

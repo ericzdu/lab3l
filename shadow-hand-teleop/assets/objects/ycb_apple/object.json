@@ -1,0 +1,92 @@
+{
+  "schema": "lab3l.object",
+  "version": 1,
+  "id": "ycb_apple",
+  "description": "Prepared from textured.obj. Mesh frame: metres, +Z up, origin at bottom centre.",
+  "size_m": [
+    0.075448,
+    0.074871,
+    0.071889
+  ],
+  "mass_kg": 0.15,
+  "contact": {
+    "friction": [
+      1.0,
+      0.005,
+      0.001
+    ],
+    "condim": 6
+  },
+  "footprint": {
+    "shape": "round",
+    "radius_m": 0.038822463616442475
+  },
+  "visual": [
+    {
+      "mesh": "visual_0.obj",
+      "rgba": [
+        0.4,
+        0.4,
+        0.4,
+        1.0
+      ],
+      "texture": "visual_0.png"
+    }
+  ],
+  "collision": {
+    "mode": "hulls",
+    "method": "coacd",
+    "hulls": [
+      {
+        "mesh": "collision/hull_00.obj",
+        "volume_m3": 0.00013422446660787303
+      },
+      {
+        "mesh": "collision/hull_01.obj",
+        "volume_m3": 0.00011712566945181408
+      }
+    ]
+  },
+  "placement": {
+    "position_m": [
+      0.55,
+      0.28,
+      0.6
+    ],
+    "yaw_degrees": 0.0,
+    "fixed": false
+  },
+  "values": {
+    "size": "dataset",
+    "mass": "assumed",
+    "friction": "assumed"
+  },
+  "source": {
+    "kind": "scanned_dataset",
+    "name": "textured.obj",
+    "sha256": "f32e694c0473b6858fcfb6f5b53a742e9cdedce2fb488bd5a5666d37354f87df",
+    "url": "http://ycb-benchmarks.s3-website-us-east-1.amazonaws.com/data/google/013_apple_google_16k.tgz",
+    "license": "CC-BY-4.0",
+    "attribution": "YCB Object and Model Set (Calli et al., 2015), https://www.ycbbenchmarks.com, licensed CC BY 4.0. Converted, rescaled and decomposed for lab3l.",
+    "kept_file": null
+  },
+  "preparation": {
+    "up_axis": "z",
+    "scale_to_metres": 1.0,
+    "size_from": "scale",
+    "collision": {
+      "method": "coacd",
+      "max_hulls": 16,
+      "threshold": 0.2,
+      "max_hull_vertices": 64,
+      "pieces": 2
+    },
+    "texture_max_px": 1024
+  },
+  "notes": [
+    "Base colour texture only; PBR lighting properties are not preserved.",
+    "Coarse decomposition (threshold 0.2): the apple is nearly convex; 11 pieces made the scripted grasp slip.",
+    "Mass, friction and size are inputs, not inferred from the mesh.",
+    "Placeholder until a SAM 3D export of the team's real object replaces it."
+  ]
+}

@@ -4,6 +4,7 @@ Also replays lab3l.episode recordings of the human-arm workspace (arms, hands
 and cup) and, if the episode is labeled, prints phase transitions.
 """
 import argparse
+from pathlib import Path
 import math
 import glfw
 import numpy as np
@@ -23,7 +24,9 @@ def episode_model(metadata):
     if scene.get("wrist_mode") != "human":
         raise ValueError(f"Unsupported episode wrist mode: {scene.get('wrist_mode')!r}")
     from human_arms import build_human_model
-    model = build_human_model(workspace=bool(scene.get("workspace")), props=scene.get("props") or ())
+    scene_config = recorded_scene_config(scene)
+    model = build_human_model(workspace=bool(scene.get("workspace")), props=scene.get("props") or (),
+                              scene_config=scene_config)
     recorded = metadata.get("model", {})
     for kind, count, name in (("joint_names", model.njnt, model.joint),
                               ("actuator_names", model.nu, model.actuator)):
@@ -31,10 +34,55 @@ def episode_model(metadata):
         if recorded.get(kind) != current:
             raise ValueError(f"Episode {kind} do not match the current human-arm model; "
                              "it was recorded with a different scene version")
-    warning = prop_layout_warning(metadata)
-    if warning:
-        print(warning, flush=True)
+    for warning in (prop_layout_warning(metadata), *asset_warnings(metadata)):
+        if warning:
+            print(warning, flush=True)
     return model
+
+
+def recorded_scene_config(scene):
+    """Path of the --scene-config an episode used (None if it used none)."""
+    info = scene.get("scene_config")
+    if not info:
+        return None
+    path = Path(info["path"])
+    if not path.is_absolute():
+        path = Path(PROJECT_ROOT) / path
+    if not path.exists():
+        raise ValueError(f"This episode used imported objects from {info['path']}, "
+                         "which is not in this checkout; copy it there to replay.")
+    return path
+
+
+def asset_warnings(metadata):
+    """Warnings when a 3D model's files differ from the ones recorded."""
+    import object_assets
+    from workspace_scene import PROPS
+    scene = metadata.get("scene", {})
+    warnings = []
+    for name, recorded in (scene.get("assets") or {}).items():
+        spec = PROPS.get(name, {})
+        current = object_assets.digest(spec["asset"]) if spec.get("type") == "asset" else None
+        if current != recorded.get("sha256"):
+            warnings.append(f"WARNING: prop {name} now uses different model files than when recorded "
+                            f"({recorded.get('id')}); it may look or collide differently in replay.")
+    recorded = scene.get("scenario")
+    if recorded:
+        import scenarios
+        current = scenarios.LOADED.get(recorded.get("name"))
+        if current is None:
+            warnings.append(f"WARNING: scenario {recorded.get('name')} ({recorded.get('path')}) is not "
+                            "in this checkout; its objects cannot be rebuilt.")
+        elif current["sha256"] != recorded.get("sha256"):
+            warnings.append(f"WARNING: scenario {recorded.get('name')} changed since this episode was "
+                            "recorded; objects may start in different places in replay.")
+    info = scene.get("scene_config")
+    if info:
+        from photo_scene import scene_digest
+        if scene_digest(recorded_scene_config(scene)) != info.get("sha256"):
+            warnings.append(f"WARNING: {info['path']} changed since this episode was recorded; "
+                            "imported objects may look or collide differently in replay.")
+    return warnings
 
 
 def prop_layout_warning(metadata):

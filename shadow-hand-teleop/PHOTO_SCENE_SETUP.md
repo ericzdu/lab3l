@@ -1,5 +1,12 @@
 # Photo → 3D mesh → offline MuJoCo: feasibility prototype
 
+> **Superseded (HOL-49).** Meshes are now prepared with `scripts/prepare_object.py`
+> into object folders under `assets/objects/`, used as task props or via
+> `--scene-config`, and `--scene-config` runs are recorded and replayed. Follow
+> [docs/ADDING_OBJECTS.md](docs/ADDING_OBJECTS.md). Version-1 bundles described
+> below still load; `prepare_photo_object.py` was replaced by `prepare_object.py`.
+> The rest of this file is the original prototype's record.
+
 This adapter connects an **existing triangle-mesh export** to the local human-arm
 workspace. It is not a SAM 3D model implementation and does not train a policy.
 The original keyboard and Vision Pro launchers remain available and unchanged.

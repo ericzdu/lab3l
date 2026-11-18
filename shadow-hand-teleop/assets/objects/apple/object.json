@@ -1,0 +1,116 @@
+{
+  "schema": "lab3l.object",
+  "version": 1,
+  "id": "apple",
+  "description": "Prepared from object_0-2.glb. Mesh frame: metres, +Z up, origin at bottom centre.",
+  "size_m": [
+    0.063419,
+    0.061083,
+    0.060771
+  ],
+  "mass_kg": 0.108,
+  "contact": {
+    "friction": [
+      1.0,
+      0.005,
+      0.02
+    ],
+    "condim": 6
+  },
+  "footprint": {
+    "shape": "round",
+    "radius_m": 0.035018715099957506
+  },
+  "visual": [
+    {
+      "mesh": "visual_0.obj",
+      "rgba": [
+        1.0,
+        1.0,
+        1.0,
+        1.0
+      ],
+      "texture": "visual_0.png"
+    }
+  ],
+  "collision": {
+    "mode": "hulls",
+    "method": "coacd",
+    "hulls": [
+      {
+        "mesh": "collision/hull_00.obj",
+        "volume_m3": 3.057155246635144e-05
+      },
+      {
+        "mesh": "collision/hull_01.obj",
+        "volume_m3": 3.191845585994058e-05
+      },
+      {
+        "mesh": "collision/hull_02.obj",
+        "volume_m3": 2.440379922403778e-05
+      },
+      {
+        "mesh": "collision/hull_03.obj",
+        "volume_m3": 6.424187963006585e-06
+      },
+      {
+        "mesh": "collision/hull_04.obj",
+        "volume_m3": 2.8659160825667333e-05
+      },
+      {
+        "mesh": "collision/hull_05.obj",
+        "volume_m3": 9.911850844547538e-07
+      },
+      {
+        "mesh": "collision/hull_06.obj",
+        "volume_m3": 5.296861490940669e-06
+      }
+    ]
+  },
+  "placement": {
+    "position_m": [
+      0.55,
+      0.28,
+      0.6
+    ],
+    "yaw_degrees": 0.0,
+    "fixed": false
+  },
+  "values": {
+    "size": "measured",
+    "mass": "measured",
+    "friction": "assumed"
+  },
+  "source": {
+    "kind": "sam3d_export",
+    "name": "object_0-2.glb",
+    "sha256": "e4eba7f94cff3f1b4a15e233fdb1735ddd92c8dea39930d828b8e15476750583",
+    "url": null,
+    "license": null,
+    "attribution": null,
+    "kept_file": "source/object_0-2.glb"
+  },
+  "preparation": {
+    "up_axis": "z",
+    "scale_to_metres": 0.06357089065272939,
+    "rotate_z_degrees": 0.0,
+    "align_footprint": false,
+    "size_from": "width",
+    "collision": {
+      "method": "coacd",
+      "max_hulls": 16,
+      "threshold": 0.05,
+      "max_hull_vertices": 64,
+      "pieces": 7
+    },
+    "texture_max_px": 1024,
+    "settled": true,
+    "settle_tilt_degrees": 7.01
+  },
+  "notes": [
+    "Base colour texture only; PBR lighting properties are not preserved.",
+    "Mass, friction and size are inputs, not inferred from the mesh.",
+    "Measured: 2.5 in long (largest size), 108 g.",
+    "Rolling friction 0.02: at 0.001 the scanned apple kept rolling on its uneven bottom."
+  ]
+}

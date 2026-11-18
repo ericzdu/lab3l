@@ -21,8 +21,9 @@ robot policy training.
 - **Headset view:** stream the rendered simulation back into the Vision Pro.
 - **Capture replay:** HolosCapture recordings replayed side by side with the
   retargeted robot hands.
-- **3D mesh import (experimental):** load a mesh exported from SAM 3D or other
-  tools onto the table (`--scene-config`).
+- **Real 3D objects:** import a mesh (e.g. from a photo via SAM 3D) as an
+  object with an accurate collision shape and real size and mass; `_real`
+  copies of the prop tasks use real models (YCB scans as placeholders).
 - **Research UI (`ui/`):** a read-only browser view of recorded datasets.
 
 ## Quick start
@@ -36,7 +37,9 @@ From `shadow-hand-teleop/` (macOS, Python 3.12):
 | `./run_human_arms.command --task set_the_table` | The same with a scored task and its props |
 | `./run_live_human_arms.command` | Live Vision Pro control (asks for the headset's IP) |
 | `./run_studio.command` | lab3l Studio at http://127.0.0.1:8765 |
-| `./run_photo_scene.command` | The scene with an imported 3D mesh |
+| `./run_human_arms.command --task apple_to_plate_real` | A task with real 3D models |
+| `./run_human_arms.command --task banana_to_plate --grasp-assist` | The team's SAM 3D banana (also `sam_apple_to_plate`) |
+| `./run_photo_scene.command <object folder>` | The scene with an imported 3D object |
 
 Run the tests:
 
@@ -44,19 +47,44 @@ Run the tests:
 MENAGERIE_CACHE_DIR="$PWD/.cache/mujoco_menagerie" .venv/bin/python -m pytest
 ```
 
+## Importing a real 3D object
+
+From `shadow-hand-teleop/`, once: `.venv/bin/python -m pip install -r requirements-photo-scene.txt`.
+
+1. Photograph the object alone on a plain background, three-quarter view from above.
+2. In Meta's [SAM 3D demo](https://www.aidemos.meta.com/segment-anything/editor/convert-image-to-3d),
+   upload it, click the object, generate, and download the **GLB**.
+3. Measure its height (or a plate's diameter) and weigh it.
+4. Import and view it:
+   ```sh
+   .venv/bin/python scripts/prepare_object.py ~/Downloads/mug.glb assets/objects/mug \
+     --id mug --up-axis y --height 0.095 --mass 0.32 --measured height mass \
+     --settle --source-kind sam3d_export --keep-source
+   zsh ./run_photo_scene.command assets/objects/mug
+   ```
+   `--settle` turns it into the pose it rests in on a table. Lying on its side?
+   Delete the folder and retry with `--up-axis z` or `x`.
+5. To use it in tasks, add it to `PROPS` in `scripts/workspace_scene.py`
+   (`"real_mug": {"type": "asset", "asset": "mug", "xy": (.24, .04)}`), then
+   `./run_human_arms.command --props real_mug`.
+
+Options (round targets, box collision, rolling, rotated boxes) and how to
+choose the collision model: [ADDING_OBJECTS.md](shadow-hand-teleop/docs/ADDING_OBJECTS.md).
+
 ## Status
 
 A working prototype, not a validated controller or a trained policy. Known
 limits: fixed shoulder positions limit reach; finger spread and thumb rotation
 are not retargeted; success labels are heuristics not yet checked against human
 labels. Details: [TEAM_SETUP.md §6](shadow-hand-teleop/TEAM_SETUP.md).
-In progress: real 3D object models with accurate collision shapes (HOL-49).
+The real-object placeholders still need replacing with SAM 3D meshes of the team's own objects.
 
 ## Repository layout
 
 | Path | Contents |
 |---|---|
 | `shadow-hand-teleop/` | Simulation, teleoperation, recording, Studio and tests ([README](shadow-hand-teleop/README.md) for detailed notes) |
-| `shadow-hand-teleop/docs/` | Specs for recording/labels, Studio, headset view, reachable workspace |
+| `shadow-hand-teleop/docs/` | Specs for recording/labels, Studio, headset view, reachable workspace; adding objects |
+| `shadow-hand-teleop/assets/objects/` | Real 3D objects (one folder each) |
 | `ui/` | Read-only research UI (React) |
 | `.github/workflows/` | CI: pytest on pushes to `main` and on PRs |

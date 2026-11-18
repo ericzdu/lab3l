@@ -9,7 +9,7 @@ import numpy as np
 import test_episode_labels as base
 from episode_labels import label_episode, load_episode, needed
 from view_dual_arms import advance_physics, not_at_start, parse_args, setup, toggle_recording
-from workspace_scene import PROPS, TASKS, object_half_height, object_start, task_props
+from workspace_scene import PROP_GROUPS, PROPS, TASKS, object_half_height, object_start, task_props
 
 
 class TargetLayout(base.Layout):
@@ -224,7 +224,15 @@ class TaskSceneTests(unittest.TestCase):
         self.assertEqual(sorted(args.props), ["apple", "plate"])
         args = parse_args_for(["--wrist", "human", "--workspace", "--props", "all",
                                "--task", "block_to_plate"])
-        self.assertEqual(args.props, list(PROPS))
+        self.assertEqual(args.props, PROP_GROUPS["all"])
+        args = parse_args_for(["--wrist", "human", "--workspace", "--task", "set_the_table_real"])
+        self.assertEqual(sorted(args.props), ["real_apple", "real_block", "real_plate"])
+        args = parse_args_for(["--wrist", "human", "--workspace", "--props", "real"])
+        self.assertEqual(args.props, PROP_GROUPS["real"])
+        # A real model and the primitive it replaces never share the table.
+        with self.assertRaises(SystemExit):
+            parse_args_for(["--wrist", "human", "--workspace", "--props", "apple",
+                            "--task", "apple_to_plate_real"])
         args = parse_args_for(["--wrist", "human", "--workspace", "--task", "set_the_table"])
         self.assertEqual(sorted(args.props), ["apple", "block", "plate"])
         args = parse_args_for(["--wrist", "human", "--workspace", "--task", "block_on_big_block"])
@@ -253,10 +261,11 @@ class TaskSceneTests(unittest.TestCase):
         object's top (at its start, and resting on the target).
         """
         grasp = {"left": np.array([.10, -.04]), "right": np.array([.10, .04])}
-        model, data, controller, _ = setup("human", workspace=True, props=list(PROPS))
-        hand = {"tray": "right", "plate": "left", "big_block": "left"}
+        scenes = {}
+        hand = {"tray": "right", "plate": "left", "big_block": "left",
+                "real_plate": "left", "real_big_block": "left"}
 
-        def error(side, goal):
+        def error(side, goal, model, data, controller):
             controller.reset(data)
             controller.set_target(side, goal)
             for _ in range(250):
@@ -267,14 +276,20 @@ class TaskSceneTests(unittest.TestCase):
         for task, spec in TASKS.items():
             if "steps" in spec or spec["object"] == "cup":
                 continue   # steps are checked as single tasks; scripted_cup_to_tray covers the cup
-            side = hand[spec["target"]]
+            side = spec.get("hand") or hand[spec["target"]]   # scenario steps say which hand
             obj, target = spec["object"], spec["target"]
+            props = tuple(task_props(task))
+            if props not in scenes:
+                scenes[props] = setup("human", workspace=True, props=list(props))[:3]
+            scene = scenes[props]
             height = 2 * object_half_height(obj) + .02
             table = base.workspace_scene.TABLE_TOP
+            target_xy, target_height = (base.workspace_scene.TRAY_CENTER, .038) if target == "tray" \
+                else (PROPS[target]["xy"], 2 * object_half_height(target))
             for xy, z in ((object_start(obj)[:2], table + height),
-                          (PROPS[target]["xy"], table + 2 * object_half_height(target) + height)):
+                          (target_xy, table + target_height + height)):
                 goal = np.r_[np.asarray(xy) - grasp[side], z]
-                self.assertLess(error(side, goal), .01, (task, side, goal))
+                self.assertLess(error(side, goal, *scene), .01, (task, side, goal))
 
     def test_record_gate_and_prop_datasets(self):
         from episode_recorder import EpisodeRecorder
@@ -335,7 +350,8 @@ class ScriptedPlateTests(unittest.TestCase):
     def test_scripted_prop_tasks_succeed(self):
         import contextlib
         import io
-        from scripted_prop_tasks import SCRIPTED_TASKS, SIDE, run
+        import json
+        from scripted_prop_tasks import ASSISTED_TASKS, SCRIPTED_TASKS, SIDE, run
         from test_scripted_cup_to_tray import is_subsequence, phase_order
         for task in SCRIPTED_TASKS:
             with self.subTest(task=task), tempfile.TemporaryDirectory() as folder, \
@@ -347,6 +363,11 @@ class ScriptedPlateTests(unittest.TestCase):
                 self.assertTrue(is_subsequence(["reach", "grasp", "lift", "transport", "release"],
                                                phase_order(labels)), phase_order(labels))
                 self.assertLess(script.max_reach_error, 1e-9)   # never clipped
+                # Assisted demos say so in the episode, with the object held.
+                metadata = json.loads((Path(directory) / "episode.json").read_text())
+                self.assertEqual(metadata["grasp_assist"], task in ASSISTED_TASKS)
+                if task in ASSISTED_TASKS:
+                    self.assertGreaterEqual(metadata["grasp_assist_activations"], 1)
 
 
 if __name__ == "__main__":

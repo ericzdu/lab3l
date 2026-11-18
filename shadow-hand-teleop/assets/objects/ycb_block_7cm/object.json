@@ -1,0 +1,102 @@
+{
+  "schema": "lab3l.object",
+  "version": 1,
+  "id": "ycb_block_7cm",
+  "description": "Prepared from textured.obj. Mesh frame: metres, +Z up, origin at bottom centre.",
+  "size_m": [
+    0.07,
+    0.069723,
+    0.069827
+  ],
+  "mass_kg": 0.2,
+  "contact": {
+    "friction": [
+      1.0,
+      0.005,
+      0.001
+    ],
+    "condim": 4
+  },
+  "footprint": {
+    "shape": "box",
+    "half_extents_m": [
+      0.035,
+      0.03486132714516829
+    ]
+  },
+  "visual": [
+    {
+      "mesh": "visual_0.obj",
+      "rgba": [
+        0.4,
+        0.4,
+        0.4,
+        1.0
+      ],
+      "texture": "visual_0.png"
+    }
+  ],
+  "collision": {
+    "mode": "boxes",
+    "method": "box",
+    "boxes": [
+      {
+        "position_m": [
+          3.469446951953614e-18,
+          -6.938893903907228e-18,
+          0.034913371076914806
+        ],
+        "half_size_m": [
+          0.035,
+          0.03486132714516829,
+          0.034913371076914806
+        ]
+      }
+    ]
+  },
+  "placement": {
+    "position_m": [
+      0.55,
+      0.28,
+      0.6
+    ],
+    "yaw_degrees": 0.0,
+    "fixed": false
+  },
+  "values": {
+    "size": "scaled_placeholder",
+    "mass": "assumed",
+    "friction": "assumed"
+  },
+  "source": {
+    "kind": "scanned_dataset",
+    "name": "textured.obj",
+    "sha256": "63de5911651c2bf02d06110878d89ff50288c0500ec75d4647b2ee28cb86f83a",
+    "url": "http://ycb-benchmarks.s3-website-us-east-1.amazonaws.com/data/google/070-b_colored_wood_blocks_google_16k.tgz",
+    "license": "CC-BY-4.0",
+    "attribution": "YCB Object and Model Set (Calli et al., 2015), https://www.ycbbenchmarks.com, licensed CC BY 4.0. Converted, rescaled and decomposed for lab3l.",
+    "kept_file": null
+  },
+  "preparation": {
+    "up_axis": "z",
+    "scale_to_metres": 2.7015414614396107,
+    "rotate_z_degrees": 0.0,
+    "align_footprint": true,
+    "size_from": "width",
+    "collision": {
+      "method": "box",
+      "max_hulls": 16,
+      "threshold": 0.05,
+      "max_hull_vertices": 64,
+      "pieces": 1
+    },
+    "texture_max_px": 512
+  },
+  "notes": [
+    "Base colour texture only; PBR lighting properties are not preserved.",
+    "Box collision: a wooden block is a box; the scan's rounded edges (convex or CoACD) made the scripted palm-down grasp fail.",
+    "Mass, friction and size are inputs, not inferred from the mesh.",
+    "Placeholder until a SAM 3D export of the team's real object replaces it.",
+    "The scan is a ~25 mm cube at 45 degrees; aligned to the axes and scaled to 7 cm to match the primitive big block."
+  ]
+}

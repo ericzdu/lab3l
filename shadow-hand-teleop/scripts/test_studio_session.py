@@ -153,6 +153,20 @@ class FakeSimSession(unittest.TestCase):
         self.assertEqual(second.status_code, 409)
         self.assertIn("already running", second.get_json()["error"])
 
+    def test_task_picker(self):
+        tasks = self.client.get("/api/tasks", base_url=f"http://127.0.0.1:{PORT}").get_json()["tasks"]
+        self.assertEqual(tasks[0], "cup_to_tray")
+        self.assertIn("apple_to_plate_real", tasks)
+        self.assertEqual(self.post("/api/session/start", {"address": ADDRESS, "task": "nope"}).status_code, 400)
+        self.assertEqual(self.post("/api/session/start", {"address": ADDRESS, "task": "set_the_table_real"}).status_code, 200)
+        args = self.session.process.args
+        self.assertEqual(args[args.index("--task") + 1], "set_the_table_real")
+        self.assertEqual(self.session.options["task"], "set_the_table_real")
+
+    def test_default_task_adds_no_flag(self):
+        self.assertEqual(self.post("/api/session/start", {"address": ADDRESS}).status_code, 200)
+        self.assertNotIn("--task", self.session.process.args)
+
     def test_crash_shows_exit_code(self):
         self.env["FAKE_SIM_CRASH"] = "1"
         self.assertEqual(self.post("/api/session/start", {"address": ADDRESS}).status_code, 200)

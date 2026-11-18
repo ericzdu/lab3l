@@ -1,7 +1,9 @@
 """Deterministic left-hand demos of the prop tasks: onto the plate, stacking, setting the table.
 
 Tasks: apple_to_plate, block_to_plate, block_on_big_block, set_the_table
-(apple then block onto the plate, one after the other).
+(apple then block onto the plate, one after the other), and the same four
+with _real: the real 3D models (workspace_scene.PROPS real_*), the team's SAM 3D
+fruit, and any scenario file (scenarios.py) whose steps are all left-handed.
 
 Same method as scripted_cup_to_tray.py: only controller targets within the
 operator's clip box and reach cap, plus FingerTransition open/close. The hand
@@ -25,12 +27,54 @@ SIDE = "left"
 # ahead of the wrist (fingers +x), toward the thumb (-y), below the palm.
 GRASP_OFFSET = np.array([.10, -.03, -.03])
 LIFT = .08
+# Per-object exceptions for the scripted hand (not used by the scene or labels):
+# "offset" replaces GRASP_OFFSET; "at" moves the grasp point from the object's
+# bounding-box centre, in its frame. The SAM 3D apple is smaller than the
+# props GRASP_OFFSET was tuned on, so the palm closes 1 cm lower; a banana's
+# box centre lies inside its curve, so the hand closes on the fruit 30 mm nearer.
+SCRIPTED_GRASP = {"sam_apple": {"offset": (.10, -.03, -.02)},
+                  "banana": {"at": (-.030, 0)}}
+# The same tweaks for scenario props using those meshes (by asset id), unless
+# the scenario file gives its own (scripted.grasp).
+ASSET_GRASP = {"apple": SCRIPTED_GRASP["sam_apple"], "banana": SCRIPTED_GRASP["banana"]}
+# Tasks whose scripted demo uses grasp assist by default (flagged in the
+# episode). This palm-down fist cannot hold the team's fruit reliably on its
+# own: the 40 mm banana is too low (the fingers reach the table before they
+# curl under it) and the 61 mm apple slips out in most nearby poses. With the
+# assist both succeed across every pose tried.
+ASSISTED_TASKS = ("sam_apple_to_plate", "banana_to_plate")
 RELEASE_HEIGHT = .006
-SCRIPTED_TASKS = ("apple_to_plate", "block_to_plate", "block_on_big_block", "set_the_table")
+SCRIPTED_TASKS = ("apple_to_plate", "block_to_plate", "block_on_big_block", "set_the_table",
+                  "apple_to_plate_real", "block_to_plate_real", "block_on_big_block_real",
+                  "set_the_table_real", "sam_apple_to_plate", "banana_to_plate")
 # Where each object goes on its target, relative to the target's centre. The
 # plate is too small for the apple and block side by side at the centre:
 # apple on the near half, block on the far half (tolerates about +/-1 cm).
-PLACE_OFFSETS = {"set_the_table": {"apple": (0, -.03), "block": (0, .035)}}
+PLACE_OFFSETS = {"set_the_table": {"apple": (0, -.03), "block": (0, .035)},
+                 "set_the_table_real": {"real_apple": (0, -.03), "real_block": (0, .035)}}
+
+
+def scripted_tasks():
+    """Built-in SCRIPTED_TASKS plus every scenario whose steps are all left-handed."""
+    from workspace_scene import TASKS, task_steps
+    scenario_tasks = [name for name, spec in TASKS.items()
+                      if "scenario" in spec and "part_of" not in spec
+                      and all(TASKS[step].get("hand") == SIDE for step in task_steps(name))]
+    return (*SCRIPTED_TASKS, *scenario_tasks)
+
+
+def uses_assist(task):
+    """Default grasp assist: the fruit tasks, and scenarios unless they opt out."""
+    from workspace_scene import TASKS
+    spec = TASKS.get(task, {})
+    return task in ASSISTED_TASKS or ("scenario" in spec and spec.get("grasp_assist", True))
+
+
+def grasp_tweaks(obj):
+    """Per-object grasp exceptions: built-in, then scenario file, then by mesh."""
+    from workspace_scene import PROPS
+    spec = PROPS.get(obj, {})
+    return SCRIPTED_GRASP.get(obj) or spec.get("scripted_grasp") or ASSET_GRASP.get(spec.get("asset"), {})
 
 
 def place_object(script, obj, target, offset=(0, 0)):
@@ -39,7 +83,14 @@ def place_object(script, obj, target, offset=(0, 0)):
     data, sites = script.data, script.controller.sites
     # Lift high enough that the object's bottom clears the target's top.
     lift = max(LIFT, 2 * object_half_height(target) + .02)
-    grasp = np.r_[data.body(obj).xpos[:2], object_start(obj)[2]] - GRASP_OFFSET
+    from workspace_scene import PROPS
+    special = grasp_tweaks(obj)
+    # "at" is in the object's own frame: turn it with a scenario prop's yaw.
+    yaw = np.deg2rad(PROPS.get(obj, {}).get("yaw", 0.))
+    turn = np.array([[np.cos(yaw), -np.sin(yaw)], [np.sin(yaw), np.cos(yaw)]])
+    at = np.r_[turn @ np.asarray(special.get("at", (0, 0)), dtype=float), 0]
+    grasp_offset = np.asarray(special.get("offset", GRASP_OFFSET))
+    grasp = np.r_[data.body(obj).xpos[:2], object_start(obj)[2]] + at - grasp_offset
     script.move(grasp + [0, 0, LIFT])                        # above the object
     script.move(grasp, speed=SLOW)                           # lower the palm onto it
     script.hand(closed=True)
@@ -60,7 +111,7 @@ def place_object(script, obj, target, offset=(0, 0)):
 
 def perform(script, task):
     from workspace_scene import TASKS, task_steps
-    offsets = PLACE_OFFSETS.get(task, {})
+    offsets = PLACE_OFFSETS.get(task) or TASKS.get(task, {}).get("place_offsets", {})
     script.hold(.5)
     for step in task_steps(task):
         obj, target = TASKS[step]["object"], TASKS[step]["target"]
@@ -68,19 +119,27 @@ def perform(script, task):
     script.hold(.8)                                          # let the labeler see it settle
 
 
-def run(task="apple_to_plate", record_dir=None, video=False, viewer=False, auto_label=True):
+def run(task="apple_to_plate", record_dir=None, video=False, viewer=False, auto_label=True,
+        grasp_assist=None):
     """Run once; return (episode directory, labels dict, Script)."""
     from episode_recorder import DEFAULT_RECORD_DIR, EpisodeRecorder
     from view_dual_arms import setup
     from workspace_scene import task_props
-    if task not in SCRIPTED_TASKS:
-        raise ValueError(f"task must be one of {SCRIPTED_TASKS}")
+    if task not in scripted_tasks():
+        raise ValueError(f"task must be one of {scripted_tasks()} (scenarios: left hand only)")
     props = task_props(task)
     model, data, controller, hands = setup("human", workspace=True, props=props)
+    assist = None
+    if grasp_assist is None:
+        grasp_assist = uses_assist(task)
+    if grasp_assist:
+        from grasp_assist import GraspAssist
+        from workspace_scene import task_held_objects
+        assist = GraspAssist(model, hands, task_held_objects(task))
     recorder = EpisodeRecorder(model, controller, hands, record_dir=record_dir or DEFAULT_RECORD_DIR,
                                task=task, source="scripted_demo", wrist_mode="human",
                                workspace=True, props=props, scale=.6, video=video,
-                               max_seconds=120, auto_label=auto_label)
+                               max_seconds=120, auto_label=auto_label, assist=assist)
     handle = directory = None
     try:
         if viewer:
@@ -89,6 +148,7 @@ def run(task="apple_to_plate", record_dir=None, video=False, viewer=False, auto_
             handle = mujoco.viewer.launch_passive(model, data)
             configure_camera(handle.cam, workspace=True)
         script = Script(model, data, controller, hands, recorder, handle, side=SIDE)
+        script.assist = assist
         recorder.start(data)
         perform(script, task)
         directory = recorder.stop(data, "user_stop")
@@ -110,12 +170,16 @@ def run(task="apple_to_plate", record_dir=None, video=False, viewer=False, auto_
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__,
                                      formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("--task", choices=SCRIPTED_TASKS, default="apple_to_plate")
+    parser.add_argument("--task", choices=scripted_tasks(), default="apple_to_plate")
     parser.add_argument("--record-dir", help="Episode folder (default: data/episodes in the project)")
     parser.add_argument("--video", action=argparse.BooleanOptionalAction, default=False)
     parser.add_argument("--viewer", action="store_true", help="Watch in the MuJoCo viewer (mjpython on macOS)")
+    parser.add_argument("--grasp-assist", action=argparse.BooleanOptionalAction, default=None,
+                        help="Weld the closed hand to the object, flagged in the episode "
+                             f"(default: on for {', '.join(ASSISTED_TASKS)} and scenarios)")
     args = parser.parse_args(argv)
-    directory, labels, script = run(args.task, args.record_dir, video=args.video, viewer=args.viewer)
+    directory, labels, script = run(args.task, args.record_dir, video=args.video, viewer=args.viewer,
+                                    grasp_assist=args.grasp_assist)
     if labels is None:
         print("No labels (labeling failed or nothing recorded).")
         return 1

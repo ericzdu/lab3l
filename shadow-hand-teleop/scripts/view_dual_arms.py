@@ -258,6 +258,9 @@ def control_status(data, fresh, mapper, controller, paused=False, error=None, re
         status["rec_seconds"] = round(recorder.elapsed(data), 1) if recorder.recording else None
         status["episode_counter"] = recorder.counter
         status["notice"] = recorder.notice
+        if getattr(recorder, "task", "cup_to_tray") != "cup_to_tray":
+            # Studio's Reset step: every object of this task at its start.
+            status["cup_at_start"] = recorder.task_ready(data) is None
         if recorder.last_saved:
             counter, metadata = recorder.last_saved
             outcome = (metadata.get("labels") or {}).get("outcome") or {}
@@ -446,8 +449,11 @@ def parse_args():
     parser.add_argument("--workspace", action="store_true", help="Table, movable cup and fixed tray (human arms)")
     parser.add_argument("--props", nargs="+", default=[], metavar="NAME",
                         help="Extra free props on the table (needs --wrist human --workspace): "
-                             "names from workspace_scene.PROPS, or 'all'")
-    parser.add_argument("--scene-config", type=Path, help="Optional local 3D mesh bundle (see PHOTO_SCENE_SETUP.md)")
+                             "names from workspace_scene.PROPS, 'all' (primitive props) or "
+                             "'real' (real 3D models)")
+    parser.add_argument("--scene-config", type=Path,
+                        help="Imported 3D objects: a scene.json, or one object folder "
+                             "(see docs/ADDING_OBJECTS.md)")
     parser.add_argument("--scale", type=float, default=0.6, help="Robot travel / human wrist travel (default 0.6)")
     parser.add_argument("--wrist", choices=("spherical", "panda", "human"), default="spherical",
                         help="Simplified ball-joint wrists (default), or previous Panda assembly")
@@ -490,7 +496,8 @@ def parse_args():
     recording.add_argument("--task", default="cup_to_tray",
                            help="Task id stored in metadata. Scored tasks (workspace_scene.TASKS): "
                                 "cup_to_tray, apple_to_plate, block_to_plate, block_on_big_block, "
-                                "set_the_table; their props are added")
+                                "set_the_table, and each with _real (real 3D models); "
+                                "their props are added")
     recording.add_argument("--operator", default="", help="Optional operator tag, e.g. initials")
     recording.add_argument("--video", action=argparse.BooleanOptionalAction, default=True,
                            help="Render operator/overview camera videos (default: on)")
@@ -522,19 +529,29 @@ def parse_args():
         parser.error("--control-port must be 1-65535")
     if args.control_port is not None and not args.control_token:
         parser.error("--control-port needs --control-token")
-    from workspace_scene import PROPS, task_props
-    if args.props == ["all"]:
-        args.props = list(PROPS)
+    from workspace_scene import expand_props, task_props
+    from scenarios import ERRORS
+    if args.task in ERRORS:
+        parser.error(f"--task {args.task}: scenario file has an error: {ERRORS[args.task]}")
     if task_props(args.task):
         if args.wrist != "human" or not args.workspace:
             parser.error(f"--task {args.task} needs --wrist human --workspace")
         args.props += [name for name in task_props(args.task) if name not in args.props]
     if args.props:
-        unknown = sorted(set(args.props) - PROPS.keys())
-        if unknown:
-            parser.error(f"unknown --props {unknown}; choose from {sorted(PROPS)} or 'all'")
+        try:
+            args.props = expand_props(args.props)
+        except ValueError as exc:
+            parser.error(f"--props: {exc}")
         if args.wrist != "human" or not args.workspace:
             parser.error("--props needs --wrist human --workspace")
+    if args.scene_config:
+        from photo_scene import object_names
+        try:
+            args.scene_objects = object_names(args.scene_config)
+        except (ValueError, OSError, KeyError) as exc:
+            parser.error(f"--scene-config: {exc}")
+    else:
+        args.scene_objects = []
     if args.grasp_assist and not args.workspace:
         parser.error("--grasp-assist needs the cup (--workspace)")
     if args.auto_recenter and not args.address:
@@ -560,7 +577,8 @@ def main():
     assist = None
     if args.grasp_assist:
         from grasp_assist import GraspAssist
-        assist = GraspAssist(model, hands)
+        from workspace_scene import task_held_objects
+        assist = GraspAssist(model, hands, task_held_objects(args.task))
     if args.headless:
         duration = args.seconds or 4
         for _ in range(max(1, int(duration / 0.01))):
@@ -603,13 +621,14 @@ def main():
                                 on_streamer=headset.attach if headset else None)
 
     recorder = None
-    if args.workspace and not args.scene_config:
+    if args.workspace:
         from episode_recorder import DEFAULT_RECORD_DIR, EpisodeRecorder
         recorder = EpisodeRecorder(model, controller, hands,
             record_dir=args.record_dir or DEFAULT_RECORD_DIR, task=args.task,
             operator=args.operator,
             source="live" if bridge else "scripted_demo" if args.demo else "keyboard",
             wrist_mode=args.wrist, workspace=args.workspace, props=args.props, scale=args.scale,
+            scene_config=args.scene_config, scene_objects=args.scene_objects,
             video=args.video, video_fps=args.video_fps, video_size=args.video_size,
             max_seconds=args.max_episode_seconds, auto_label=not args.no_auto_label,
             assist=assist)
@@ -633,8 +652,6 @@ def main():
     print("B: switch operator / overview camera. " +
           ("Imported scene starts in overview." if args.scene_config else
            "Default view looks forward over palms-down hands."), flush=True)
-    if args.scene_config:
-        print("Mesh-import prototype: recording is disabled; imported scene assets are not yet packaged for episode replay.", flush=True)
     if recorder:
         print("E: start/stop+save an episode | X: discard it. Episodes are simulated robot state.", flush=True)
     if bridge:

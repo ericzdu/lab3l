@@ -110,9 +110,25 @@ class HeadsetView:
 
     def _start(self):
         try:
+            self._wait_for_room_peer()
             self.streamer.start_webrtc(blocking=False)
         except Exception as exc:
             self._fail(exc)
+
+    def _wait_for_room_peer(self, poll=.1):
+        """Room-code (cross-network) mode: wait until the headset is in the room.
+
+        avp_stream sends one WebRTC offer and skips any other while it is in
+        progress. Offering before the Vision Pro joins the room loses the
+        offer, and it also blocks the library's own hand-tracking offer, so
+        both time out ("Timeout waiting for SDP answer"). After the headset
+        joins, a single offer carries hand tracking and this video (configured
+        already). Local IP mode needs no wait.
+        """
+        if not getattr(self.streamer, "_cross_network_mode", False):
+            return
+        while not getattr(self.streamer, "_peer_ready", True):
+            time.sleep(poll)
 
     def _fail(self, exc):
         from episode_recorder import scrub
@@ -133,10 +149,22 @@ class HeadsetView:
 
     # -- main thread -----------------------------------------------------------
     def connected(self):
+        """True once the headset receives video.
+
+        avp_stream's is_connected() only turns True on the ICE state
+        "connected"; a Vision Pro on the same Wi-Fi can go straight from
+        "checking" to "completed", leaving it False while video flows, so
+        nothing was ever sent. The library starts its media clock when the
+        connected headset first pulls a video frame, in both IP and room-code
+        mode, so that counts as connected too.
+        """
         try:
-            return bool(self.streamer.is_connected())
+            if self.streamer.is_connected():
+                return True
         except AttributeError:   # older avp_stream: assume yes once started
             return True
+        clock = getattr(self.streamer, "_media_clock", None)
+        return bool(getattr(clock, "is_started", False))
 
     def follow(self, viewer_cam):
         """Copy the Mac viewer camera's pose into our own camera (never mutate theirs)."""

@@ -91,7 +91,17 @@ async function key(name) {
   try { await post("/api/session/key", { key: name }); } catch { /* not connected yet */ }
 }
 
+async function loadTasks() {
+  try {
+    const { tasks } = await getJSON("/api/tasks");
+    $("task").replaceChildren(...tasks.map((name) => new Option(name, name)));
+  } catch { /* keep the default task */ }
+  const saved = recall("task", "cup_to_tray");
+  if ([...$("task").options].some((option) => option.value === saved)) $("task").value = saved;
+}
+
 export function initSession() {
+  loadTasks();
   $("address").value = recall("address", "");
   $("operator").value = recall("operator", "");
   for (const id of ["auto-recenter", "headset-view", "grasp-assist"]) {
@@ -103,8 +113,9 @@ export function initSession() {
     const body = {
       address: $("address").value.trim(), operator: $("operator").value.trim(),
       auto_recenter: $("auto-recenter").checked, headset_view: $("headset-view").checked,
-      grasp_assist: $("grasp-assist").checked,
+      grasp_assist: $("grasp-assist").checked, task: $("task").value,
     };
+    remember("task", body.task);
     remember("address", body.address);
     remember("operator", body.operator);
     for (const id of ["auto-recenter", "headset-view", "grasp-assist"]) remember(id, $(id).checked);

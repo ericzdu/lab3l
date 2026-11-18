@@ -1,4 +1,8 @@
-"""Optional --props: physics on the table, default scene unchanged, replay round trip."""
+"""Optional --props: physics on the table, default scene unchanged, replay round trip.
+
+PropTests runs on the primitive props (--props all); RealPropTests repeats the
+physics checks on the real 3D models (--props real) and adds asset checks.
+"""
 import json
 import tempfile
 import unittest
@@ -7,13 +11,16 @@ from pathlib import Path
 import numpy as np
 
 from view_dual_arms import advance_physics, setup
-from workspace_scene import PROPS, prop_half_height, prop_start
+from workspace_scene import PROP_GROUPS, PROPS, prop_half_height, prop_start
 
 
 class PropTests(unittest.TestCase):
+    GROUP = "all"
+
     @classmethod
     def setUpClass(cls):
-        cls.m, cls.d, cls.c, cls.hands = setup("human", workspace=True, props=list(PROPS))
+        cls.names = PROP_GROUPS[cls.GROUP]
+        cls.m, cls.d, cls.c, cls.hands = setup("human", workspace=True, props=cls.names)
 
     def step(self, n):
         for _ in range(n):
@@ -25,27 +32,28 @@ class PropTests(unittest.TestCase):
         default, _, _, _ = setup("human", workspace=True)
         names = lambda m: [m.joint(i).name for i in range(m.njnt)]
         self.assertTrue(all(f"{p}_free" not in names(default) for p in PROPS))
-        self.assertEqual(names(self.m), names(default) + [f"{p}_free" for p in PROPS])
-        self.assertEqual(self.m.nq, default.nq + 7 * len(PROPS))
+        self.assertEqual(names(self.m), names(default) + [f"{p}_free" for p in self.names])
+        self.assertEqual(self.m.nq, default.nq + 7 * len(self.names))
 
     def test_props_rest_on_table_and_reset(self):
         self.c.reset(self.d)
         self.step(600)
-        for name in PROPS:
+        for name in self.names:
             np.testing.assert_allclose(self.d.body(name).xpos, prop_start(name), atol=.002,
                                        err_msg=name)
             self.assertEqual(self.m.body_gravcomp[self.m.body(name).id], 0)
         self.assertLess(np.max(np.abs(self.d.qvel)), .01)
-        q = int(self.m.joint("block_free").qposadr[0])
+        block = self.names[0]
+        q = int(self.m.joint(f"{block}_free").qposadr[0])
         self.d.qpos[q] += .05
         self.c.reset(self.d)
-        np.testing.assert_allclose(self.d.qpos[q:q + 3], prop_start("block"))
+        np.testing.assert_allclose(self.d.qpos[q:q + 3], prop_start(block))
 
     def test_left_hand_reaches_above_each_prop(self):
         # The palm-down left hand holds things ~10 cm ahead of its wrist site and
         # 4 cm toward the thumb (see test_prop_tasks), so the wrist goes there.
         grasp = np.array([.10, -.04, 0])
-        for name in PROPS:
+        for name in self.names:
             self.c.reset(self.d)
             goal = prop_start(name) + [0, 0, prop_half_height(PROPS[name]) + .06] - grasp
             self.c.set_target("left", goal)
@@ -58,8 +66,8 @@ class PropTests(unittest.TestCase):
         from unittest import mock
         import prop_visuals
         with mock.patch.dict(prop_visuals.VISUALS, clear=True):
-            plain, _, _, _ = setup("human", workspace=True, props=list(PROPS))
-        for name in PROPS:
+            plain, _, _, _ = setup("human", workspace=True, props=self.names)
+        for name in self.names:
             a, b = self.m.body(name).id, plain.body(name).id
             self.assertAlmostEqual(self.m.body_mass[a], plain.body_mass[b], places=12)
             np.testing.assert_allclose(self.m.body_inertia[a], plain.body_inertia[b], rtol=1e-9)
@@ -119,6 +127,67 @@ class PropTests(unittest.TestCase):
         default, _, _, _ = setup("human", workspace=True)
         metadata["model"]["joint_names"] = [default.joint(i).name for i in range(default.njnt)]
         self.assertEqual(episode_model(metadata).nq, default.nq)
+
+
+
+class RealPropTests(PropTests):
+    """The same physics on the real 3D models, plus their asset properties."""
+    GROUP = "real"
+
+    def test_visuals_are_look_only(self):
+        """Visual meshes: no contacts, no mass. Collision pieces carry object.json's mass."""
+        import object_assets
+        for name in self.names:
+            config = object_assets.load(PROPS[name]["asset"])
+            body = self.m.body(name).id
+            geoms = [g for g in range(self.m.ngeom) if self.m.geom_bodyid[g] == body]
+            visual = [g for g in geoms if self.m.geom(g).name.startswith(f"{name}_visual_")]
+            collision = [g for g in geoms if g not in visual]
+            self.assertEqual(len(visual), len(config["visual"]), name)
+            pieces = config["collision"].get("hulls") or config["collision"]["boxes"]
+            self.assertEqual(len(collision), len(pieces), name)
+            for g in visual:
+                self.assertEqual((self.m.geom_contype[g], self.m.geom_conaffinity[g]), (0, 0))
+                self.assertEqual(self.m.geom_group[g], object_assets.VISUAL_GROUP)
+            for g in collision:
+                self.assertEqual(self.m.geom_group[g], object_assets.COLLISION_GROUP)
+                self.assertEqual(self.m.geom_condim[g], config["contact"]["condim"])
+            self.assertAlmostEqual(self.m.body_mass[body], config["mass_kg"], places=9)
+            self.assertTrue(np.all(self.m.body_inertia[body] > 0), name)
+
+    def test_record_then_replay_round_trip(self):
+        """Episodes store each model's id and hash; replay warns when the files change."""
+        from episode_recorder import EpisodeRecorder
+        from replay_demo import asset_warnings, episode_model
+        from test_episode_recorder import run
+        import object_assets
+        props = ["real_block", "real_apple"]
+        model, data, controller, hands = setup("human", workspace=True, props=props)
+        with tempfile.TemporaryDirectory() as tmp:
+            recorder = EpisodeRecorder(model, controller, hands, record_dir=Path(tmp),
+                                       source="scripted_demo", props=props, video=False,
+                                       auto_label=False)
+            recorder.start(data)
+            run(recorder, model, data, controller, .5)
+            directory = recorder.stop(data, "user_stop")
+            metadata = json.loads((directory / "episode.json").read_text())
+        assets = metadata["scene"]["assets"]
+        self.assertEqual(sorted(assets), sorted(props))
+        for name in props:
+            self.assertEqual(assets[name]["id"], PROPS[name]["asset"])
+            self.assertEqual(assets[name]["sha256"], object_assets.digest(PROPS[name]["asset"]))
+        self.assertEqual(episode_model(metadata).nq, model.nq)
+        self.assertEqual(asset_warnings(metadata), [])
+        assets["real_block"]["sha256"] = "0" * 64
+        self.assertIn("real_block", asset_warnings(metadata)[0])
+
+    def test_lathe_surfaces_are_closed(self):
+        self.skipTest("primitive prop visuals only")
+
+
+class SamPropTests(RealPropTests):
+    """The team's SAM 3D objects (apple, banana): same physics and asset checks."""
+    GROUP = "sam"
 
 
 if __name__ == "__main__":
