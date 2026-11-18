@@ -311,6 +311,10 @@ class EpisodeRecorder:
                   if PROPS[name]["type"] == "asset"}
         if assets:
             info["assets"] = assets
+        import scenarios
+        scenario = scenarios.summary(self.task)
+        if scenario is not None:
+            info["scenario"] = scenario
         if self.scene_config is not None:
             from photo_scene import scene_summary
             info["scene_config"] = scene_summary(self.scene_config)

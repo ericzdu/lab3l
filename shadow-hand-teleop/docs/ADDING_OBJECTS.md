@@ -55,11 +55,26 @@ not listed is recorded as `assumed` in `object.json`.
 
 ## 3. Prepare the folder
 
+First check the way up and the size. `--preview-only` scales and turns the
+mesh in memory and writes one PNG (front, side and top views on a 1 cm grid,
+with the resulting size in the caption) in a second or two; nothing else is
+written. Change `--up-axis`, `--rotate-z` or the size and run it again until
+it looks right:
+
+```sh
+.venv/bin/python scripts/prepare_object.py ~/Downloads/apple.glb --preview-only apple.png \
+  --up-axis y --height 0.072
+```
+
+Then prepare the folder with the same values. `--preview PNG` renders the
+result (after `--settle`), with a fourth panel showing the collision pieces,
+one colour each:
+
 ```sh
 .venv/bin/python scripts/prepare_object.py ~/Downloads/apple.glb assets/objects/apple \
   --id apple --up-axis y --height 0.072 --mass 0.068 --measured height mass \
-  --footprint round --condim 6 --source-kind sam3d_export --keep-source
-zsh ./run_photo_scene.command assets/objects/apple     # look at it on the table
+  --footprint round --condim 6 --source-kind sam3d_export --keep-source --settle \
+  --preview apple_prepared.png
 ```
 
 - `--up-axis`: GLB is usually `y`. If the object lies on its side, try another.
@@ -90,28 +105,89 @@ blocks use `box`: the scan's rounded edges made the palm-down grasp fail. The
 plate needed the fine setting: with 16 pieces a block set on it rocked between
 pieces and never settled. Check yours with the tests below.
 
-## 4. Use it in a task
+## 4. Use it in a task: a scenario file
 
-Add a prop in `scripts/workspace_scene.py`:
+A scenario is a JSON file in `assets/scenarios/` that places objects and
+says what to score. No Python edits: it shows up as a task in the sim
+(`--task <name>`), the Studio task list, labels, replay and the scripted demos.
+`assets/scenarios/fruit_to_plate.json` is an example:
 
-```python
-"real_apple": {"type": "asset", "asset": "apple", "xy": (.24, .04), "replaces": "apple"},
+```json
+{
+  "schema": "lab3l.scenario", "version": 1, "name": "fruit_to_plate",
+  "description": "The team's SAM 3D apple and banana both onto the plate with the left hand.",
+  "objects": [
+    {"id": "apple",  "asset": "apple",  "position_m": [0.24, 0.04], "yaw_degrees": 0},
+    {"id": "banana", "asset": "banana", "position_m": [0.36, 0.30], "yaw_degrees": 0},
+    {"id": "plate",  "prop": "real_plate"}
+  ],
+  "steps": [
+    {"object": "apple",  "target": "plate", "hand": "left"},
+    {"object": "banana", "target": "plate", "hand": "left"}
+  ],
+  "scripted": {"place_offset": {"apple": [0, -0.035], "banana": [0, 0.03]}}
+}
 ```
 
-`replaces` names a primitive prop at the same spot; the two are never put in
-one scene. Add or point a task at it in `TASKS` (e.g. `apple_to_plate_real`).
+| Field | Meaning |
+|---|---|
+| `name` | Task name; must match the file name. Lowercase, up to 24 characters |
+| `objects[].asset` + `position_m` | An object folder placed with its bottom on the table at `[x, y]` (metres), turned `yaw_degrees` about +Z |
+| `objects[].prop` | A built-in prop at its usual spot (`real_plate`, `plate`, `big_block`, ...) |
+| `objects[].extra` | `true`: on the table, never scored. Objects no step uses are unscored anyway |
+| `steps[]` | `object` onto `target` (an object id, or `tray`; `cup` is also an object) with `hand` (`left`/`right`); `upright` optional. Several steps are done in any order and scored on the final state |
+| `scripted` | Scripted demo only: `grasp_assist` (default true), `grasp.<id>.offset` / `.at`, `place_offset.<id>` |
+
+The worktop runs x 0.16-1.08, y -0.58-0.58 (x away from the operator, +y to
+their left). The left hand works the left of the table (the plate is at
+`[0.23, 0.18]`); the right hand's area around the cup and tray is small, so
+expect to try a few spots there (`check` says how far off the hand is).
+
+Write it by hand, or from flags (`new` then runs `check`):
+
+```sh
+.venv/bin/python scripts/scenario_tool.py new apple_on_block \
+  --object apple=apple@0.24,0.04,30 --object block=real_big_block --step apple:block:left
+```
+
+Then check it:
+
+```sh
+.venv/bin/python scripts/scenario_tool.py check fruit_to_plate --snapshot layout.png --scripted
+```
+
+`check` reports PASS or FAIL for: the file (fields, names, every footprint on
+the worktop and at least 5 mm from the others, the cup and the tray); each
+object resting where it starts for 2 s; each step's hand reaching the object
+and the target (the simulated reach test from `test_prop_tasks`; on failure it
+says whether the other hand would reach). `--snapshot` renders the overview
+and a top view; `--scripted` runs the scripted demo (left-hand scenarios
+only) and reports its label. A file with an error is skipped at start-up with
+a warning, and `--task` with its name stops with that error.
+
 Run it:
 
 ```sh
-./run_human_arms.command --task apple_to_plate_real
-.venv/bin/python scripts/scripted_prop_tasks.py --task apple_to_plate_real
+./run_human_arms.command --task fruit_to_plate
+.venv/bin/python scripts/scripted_prop_tasks.py --task fruit_to_plate
 ```
+
+Each scenario object becomes a prop named `<scenario>_<id>` (episodes record
+it under that name). Episodes also store the scenario file's sha256 under
+`metadata.scene.scenario`; replay warns if the file changed or is missing.
+Committed scenarios join the reach test in `test_prop_tasks`; the scripted
+demo test covers only the built-in tasks, so a hard-to-grasp object never
+breaks the suite.
+
+The built-in tasks stay in `TASKS` in `scripts/workspace_scene.py`, with props
+in `PROPS`; add there only for something a scenario cannot express.
 
 `--grasp-assist` (and Studio's checkbox) welds a closed hand to whichever of
 the task's objects it holds, flagged in the episode. The scripted demos of the
 team's fruit use it by default (`ASSISTED_TASKS` in `scripted_prop_tasks.py`):
 the scripted palm-down fist cannot hold a 40 mm banana or a 61 mm apple
-reliably on its own. A live operator may not need it.
+reliably on its own. Scenarios use it in their scripted demos too, unless
+`"scripted": {"grasp_assist": false}`. A live operator may not need it.
 
 Labels read the object's height and footprint from `object.json`, so success
 scoring needs no code change. Episodes store each real prop's object id,
@@ -126,10 +202,12 @@ the model changed.
 
 ```sh
 MENAGERIE_CACHE_DIR="$PWD/.cache/mujoco_menagerie" .venv/bin/python -m pytest \
-  scripts/test_object_assets.py scripts/test_workspace_props.py scripts/test_prop_tasks.py
+  scripts/test_object_assets.py scripts/test_workspace_props.py scripts/test_prop_tasks.py \
+  scripts/test_scenarios.py
 ```
 
-These check that every committed object is valid and credited; each real
+These check that every committed object is valid and credited; every
+committed scenario loads and its steps are reachable; each real
 prop rests on the table, resets and is reachable; visuals have no mass or
 contacts; every scripted task (including `_real`) labels as SUCCESS; and with
 all real models in the scene, a control update (five physics steps) stays

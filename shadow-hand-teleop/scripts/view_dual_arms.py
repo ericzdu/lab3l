@@ -530,6 +530,9 @@ def parse_args():
     if args.control_port is not None and not args.control_token:
         parser.error("--control-port needs --control-token")
     from workspace_scene import expand_props, task_props
+    from scenarios import ERRORS
+    if args.task in ERRORS:
+        parser.error(f"--task {args.task}: scenario file has an error: {ERRORS[args.task]}")
     if task_props(args.task):
         if args.wrist != "human" or not args.workspace:
             parser.error(f"--task {args.task} needs --wrist human --workspace")

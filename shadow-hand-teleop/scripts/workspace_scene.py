@@ -197,7 +197,10 @@ def add_props(scene, names):
     expand_props(names)   # refuses props that share a spot
     for name in (n for n in PROPS if n in names):
         spec = PROPS[name]
-        body = scene.worldbody.add_body(name=name, pos=prop_start(name))
+        # Scenario props (scenarios.py) may be turned about +Z ("yaw", degrees).
+        half = np.deg2rad(spec.get("yaw", 0.)) / 2
+        body = scene.worldbody.add_body(name=name, pos=prop_start(name),
+                                        quat=[np.cos(half), 0, 0, np.sin(half)])
         body.add_freejoint(name=f"{name}_free")
         add_assist_welds(scene, name)
         if spec["type"] == "asset":
@@ -229,7 +232,8 @@ def add_props(scene, names):
 # round (test_prop_tasks.py checks this). A task with "steps" is a sequence of
 # the single tasks it names, done in any order and scored on the final state
 # (all must succeed). A task not listed here is still recorded and
-# phase-labeled, but its outcome is "not_evaluated".
+# phase-labeled, but its outcome is "not_evaluated". Scenario files
+# (scenarios.py, assets/scenarios/) add more entries at import, with a "hand".
 TASKS = {
     "cup_to_tray":        {"object": "cup",   "target": "tray",      "upright": True},
     "apple_to_plate":     {"object": "apple", "target": "plate",     "upright": False},
@@ -279,8 +283,9 @@ def task_objects(task):
 
 
 def task_props(task):
-    """Props (PROPS names) a task needs in the scene."""
-    return [name for name in task_objects(task) if name in PROPS]
+    """Props (PROPS names) a task needs in the scene, plus a scenario's unscored extras."""
+    names = [name for name in task_objects(task) if name in PROPS]
+    return names + [name for name in TASKS.get(task, {}).get("extras", []) if name not in names]
 
 
 def object_start(name):
@@ -312,3 +317,9 @@ def prop_footprint(name):
     if spec["type"] == "box":
         return "box", tuple(spec["size"][:2])
     return "round", float(spec["size"][0])
+
+
+# Scenario files (assets/scenarios/*.json) add their props and tasks here.
+# scenarios.py imports this module lazily, so the cycle is safe.
+import scenarios as _scenarios  # noqa: E402
+_scenarios.register()

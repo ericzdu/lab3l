@@ -66,6 +66,16 @@ def asset_warnings(metadata):
         if current != recorded.get("sha256"):
             warnings.append(f"WARNING: prop {name} now uses different model files than when recorded "
                             f"({recorded.get('id')}); it may look or collide differently in replay.")
+    recorded = scene.get("scenario")
+    if recorded:
+        import scenarios
+        current = scenarios.LOADED.get(recorded.get("name"))
+        if current is None:
+            warnings.append(f"WARNING: scenario {recorded.get('name')} ({recorded.get('path')}) is not "
+                            "in this checkout; its objects cannot be rebuilt.")
+        elif current["sha256"] != recorded.get("sha256"):
+            warnings.append(f"WARNING: scenario {recorded.get('name')} changed since this episode was "
+                            "recorded; objects may start in different places in replay.")
     info = scene.get("scene_config")
     if info:
         from photo_scene import scene_digest

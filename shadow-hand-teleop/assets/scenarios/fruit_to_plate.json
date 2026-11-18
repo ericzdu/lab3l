@@ -1,0 +1,18 @@
+{
+  "schema": "lab3l.scenario",
+  "version": 1,
+  "name": "fruit_to_plate",
+  "description": "The team's SAM 3D apple and banana both onto the plate with the left hand.",
+  "objects": [
+    {"id": "apple", "asset": "apple", "position_m": [0.24, 0.04], "yaw_degrees": 0},
+    {"id": "banana", "asset": "banana", "position_m": [0.36, 0.30], "yaw_degrees": 0},
+    {"id": "plate", "prop": "real_plate"}
+  ],
+  "steps": [
+    {"object": "apple", "target": "plate", "hand": "left"},
+    {"object": "banana", "target": "plate", "hand": "left"}
+  ],
+  "scripted": {
+    "place_offset": {"apple": [0, -0.035], "banana": [0, 0.03]}
+  }
+}

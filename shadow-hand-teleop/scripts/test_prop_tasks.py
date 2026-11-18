@@ -276,7 +276,7 @@ class TaskSceneTests(unittest.TestCase):
         for task, spec in TASKS.items():
             if "steps" in spec or spec["object"] == "cup":
                 continue   # steps are checked as single tasks; scripted_cup_to_tray covers the cup
-            side = hand[spec["target"]]
+            side = spec.get("hand") or hand[spec["target"]]   # scenario steps say which hand
             obj, target = spec["object"], spec["target"]
             props = tuple(task_props(task))
             if props not in scenes:
@@ -284,8 +284,10 @@ class TaskSceneTests(unittest.TestCase):
             scene = scenes[props]
             height = 2 * object_half_height(obj) + .02
             table = base.workspace_scene.TABLE_TOP
+            target_xy, target_height = (base.workspace_scene.TRAY_CENTER, .038) if target == "tray" \
+                else (PROPS[target]["xy"], 2 * object_half_height(target))
             for xy, z in ((object_start(obj)[:2], table + height),
-                          (PROPS[target]["xy"], table + 2 * object_half_height(target) + height)):
+                          (target_xy, table + target_height + height)):
                 goal = np.r_[np.asarray(xy) - grasp[side], z]
                 self.assertLess(error(side, goal, *scene), .01, (task, side, goal))
 

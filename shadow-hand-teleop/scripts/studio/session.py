@@ -65,9 +65,16 @@ DEFAULT_TASK = "cup_to_tray"
 
 
 def tasks():
-    """Scored tasks the page offers (workspace_scene.TASKS), default first."""
+    """Scored tasks the page offers (workspace_scene.TASKS), default first.
+
+    Re-reads assets/scenarios each time, so a new scenario file shows up without
+    restarting Studio. A scenario's single steps are not offered on their own.
+    """
+    import scenarios
     from workspace_scene import TASKS
-    return [DEFAULT_TASK, *(name for name in TASKS if name != DEFAULT_TASK)]
+    scenarios.register(quiet=True)
+    return [DEFAULT_TASK, *(name for name, spec in TASKS.items()
+                            if name != DEFAULT_TASK and "part_of" not in spec)]
 
 
 class Session:
