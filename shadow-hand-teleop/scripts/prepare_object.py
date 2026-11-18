@@ -4,6 +4,11 @@
         --id apple --up-axis y --height 0.072 --mass 0.068 --measured height mass \\
         --source-kind sam3d_export --footprint round
 
+Check orientation and size first (seconds, writes only the PNG):
+
+    .venv/bin/python scripts/prepare_object.py apple.glb --preview-only apple.png \
+        --up-axis y --height 0.072
+
 Output (a NEW folder; existing folders are never overwritten):
 object.json, visual_<i>.obj (+ .png texture), collision/hull_*.obj and, with
 --keep-source, the original file under source/. See docs/ADDING_OBJECTS.md.
@@ -180,6 +185,21 @@ def obj_text(vertices, faces, uv=None):
     return "\n".join(lines) + "\n"
 
 
+def write_visuals(destination, parts, appearance):
+    """visual_<i>.obj (+ .png) in `destination`; returns the object.json visual records."""
+    records = []
+    for index, (part, (rgba, texture, _)) in enumerate(zip(parts, appearance)):
+        stem = f"visual_{index}"
+        uv = np.asarray(part.visual.uv) if texture is not None else None
+        (destination / f"{stem}.obj").write_text(obj_text(part.vertices, part.faces, uv), encoding="utf-8")
+        record = {"mesh": f"{stem}.obj", "rgba": [round(float(v), 4) for v in rgba]}
+        if texture is not None:
+            texture.save(destination / f"{stem}.png", optimize=True)
+            record["texture"] = f"{stem}.png"
+        records.append(record)
+    return records
+
+
 def collision_hulls(parts, method, max_hulls, threshold, max_hull_vertices, seed=0):
     """Convex pieces [(vertices, faces, volume)] for the collision model."""
     tm = mesh_library()
@@ -302,16 +322,7 @@ def prepare(source, destination, *, object_id, up_axis, height_m=None, width_m=N
     destination.mkdir(parents=True)
     if hulls is not None:
         (destination / "collision").mkdir()
-    visual_records = []
-    for index, (part, (rgba, texture, _)) in enumerate(zip(parts, appearance)):
-        stem = f"visual_{index}"
-        uv = np.asarray(part.visual.uv) if texture is not None else None
-        (destination / f"{stem}.obj").write_text(obj_text(part.vertices, part.faces, uv), encoding="utf-8")
-        record = {"mesh": f"{stem}.obj", "rgba": [round(float(v), 4) for v in rgba]}
-        if texture is not None:
-            texture.save(destination / f"{stem}.png", optimize=True)
-            record["texture"] = f"{stem}.png"
-        visual_records.append(record)
+    visual_records = write_visuals(destination, parts, appearance)
     if collision == "box":
         # A MuJoCo box primitive: exact box-box contacts (a box mesh is not).
         collision_record = {"mode": "boxes", "method": "box", "boxes": [
@@ -380,8 +391,15 @@ def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__,
                                      formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("source", help="GLB/GLTF/OBJ/STL/mesh-PLY; NOT a photo or Gaussian splat")
-    parser.add_argument("destination", help="New folder, e.g. assets/objects/<id>")
-    parser.add_argument("--id", required=True, dest="object_id")
+    parser.add_argument("destination", nargs="?",
+                        help="New folder, e.g. assets/objects/<id> (not needed with --preview-only)")
+    parser.add_argument("--preview-only", metavar="PNG",
+                        help="Just render front/side/top views of the scaled, turned mesh to this PNG "
+                             "(seconds; no CoACD, nothing else written). Use it to settle --up-axis, "
+                             "--rotate-z and the size first")
+    parser.add_argument("--preview", metavar="PNG",
+                        help="After preparing, render the folder (collision pieces in green) to this PNG")
+    parser.add_argument("--id", dest="object_id")
     parser.add_argument("--up-axis", choices=("x", "y", "z"), required=True,
                         help="The source mesh's up axis (GLB is usually y; check visually)")
     size = parser.add_mutually_exclusive_group(required=True)
@@ -389,7 +407,7 @@ def main(argv=None):
     size.add_argument("--width", type=float, dest="width_m",
                       help="Real largest horizontal size in METRES (e.g. a plate's diameter)")
     size.add_argument("--scale", type=float, help="Multiplier; 1 for a mesh already in metres")
-    parser.add_argument("--mass", type=float, required=True, dest="mass_kg", help="Mass in kg")
+    parser.add_argument("--mass", type=float, dest="mass_kg", help="Mass in kg")
     parser.add_argument("--rotate-z", type=float, default=0., help="Turn the mesh about +Z (degrees)")
     parser.add_argument("--align-footprint", action="store_true",
                         help="Square the top view to the axes first (e.g. a box scanned at 45 degrees)")
@@ -423,14 +441,37 @@ def main(argv=None):
                              "SAM 3D exports and curved objects)")
     parser.add_argument("--note", action="append", default=[], dest="notes")
     args = parser.parse_args(argv)
+    options = vars(args)
+    preview_only, preview = options.pop("preview_only"), options.pop("preview")
+    if preview_only:
+        from object_preview import render_source
+        try:
+            size = render_source(args.source, preview_only, up_axis=args.up_axis, height_m=args.height_m,
+                                 width_m=args.width_m, scale=args.scale, rotate_z=args.rotate_z,
+                                 align_footprint=args.align_footprint, texture_size=args.texture_size)
+        except (ValueError, OSError, KeyError) as exc:
+            parser.exit(2, f"Cannot preview object: {exc}\n")
+        print(f"Preview {preview_only}: {np.round(size * 1000).astype(int).tolist()} mm (x, y, z). "
+              "Nothing else was written.")
+        return 0
+    missing = [flag for flag, value in (("destination", args.destination), ("--id", args.object_id),
+                                        ("--mass", args.mass_kg)) if value is None]
+    if missing:
+        parser.error(f"preparing needs {', '.join(missing)} (or use --preview-only)")
     try:
-        path = prepare(**vars(args))
+        path = prepare(**options)
     except (ValueError, OSError, KeyError) as exc:
         parser.exit(2, f"Cannot prepare object: {exc}\n")
     config = load(path.parent)
     print(f"Prepared {path}")
     print(f"Size {np.round(np.asarray(config['size_m']) * 1000).astype(int).tolist()} mm, "
           f"{config['preparation']['collision']['pieces']} collision pieces.")
+    if preview:
+        from object_preview import render_folder
+        try:
+            print(f"Preview {render_folder(path.parent, preview)}")
+        except Exception as exc:   # no GL context, etc.: the folder is fine without a picture
+            print(f"Preview skipped: {exc}")
     print(f'View it: zsh ./run_photo_scene.command "{path.parent}"')
     return 0
 
